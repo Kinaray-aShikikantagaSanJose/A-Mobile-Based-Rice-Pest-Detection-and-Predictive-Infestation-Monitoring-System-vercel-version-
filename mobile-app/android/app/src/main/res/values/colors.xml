@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Palay Patrol brand green (logo background). -->
+    <color name="brand_green">#015615</color>
+    <color name="ic_launcher_background">#015615</color>
+</resources>

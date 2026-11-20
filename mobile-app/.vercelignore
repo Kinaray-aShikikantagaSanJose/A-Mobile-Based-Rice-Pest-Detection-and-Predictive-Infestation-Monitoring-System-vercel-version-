@@ -1,0 +1,6 @@
+android/
+ios/
+windows/
+test/
+.dart_tool/
+*.log

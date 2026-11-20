@@ -1,0 +1,3 @@
+# Extra packages for running the API on your own computer (python run_server.py).
+-r requirements.txt
+uvicorn[standard]

@@ -1,0 +1,16 @@
+fastapi
+sqlalchemy
+psycopg2-binary
+bcrypt
+python-jose[cryptography]
+python-dotenv
+pydantic[email]
+email-validator
+python-multipart
+# Server-side pest detection (app/detector.py, models/rice_pest.onnx).
+# ultralytics is only needed to re-export the model; see models/README.md.
+onnxruntime==1.30.0
+numpy==2.5.3
+pillow==12.3.0
+# scikit-learn was removed for Vercel (trend line is computed with numpy, see
+# app/trend_service.py): scikit-learn + SciPy would exceed the 250 MB limit.

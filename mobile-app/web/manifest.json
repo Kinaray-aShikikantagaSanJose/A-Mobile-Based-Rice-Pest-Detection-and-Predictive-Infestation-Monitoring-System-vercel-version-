@@ -1,0 +1,35 @@
+{
+    "name": "Palay Patrol",
+    "short_name": "Palay Patrol",
+    "start_url": ".",
+    "display": "standalone",
+    "background_color": "#015615",
+    "theme_color": "#015615",
+    "description": "Rice pest detection, infestation hotspot monitoring, treatment recommendation, and trend prediction.",
+    "orientation": "portrait-primary",
+    "prefer_related_applications": false,
+    "icons": [
+        {
+            "src": "icons/Icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-maskable-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "maskable"
+        },
+        {
+            "src": "icons/Icon-maskable-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "maskable"
+        }
+    ]
+}

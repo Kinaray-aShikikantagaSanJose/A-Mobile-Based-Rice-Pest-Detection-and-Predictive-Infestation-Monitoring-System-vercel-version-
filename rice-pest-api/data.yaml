@@ -1,0 +1,8 @@
+path: ./Images
+
+train: train/images
+val: valid/images          # folder is "valid", not "val"
+test: test/images
+
+nc: 4
+names: ['brown-planthopper', 'green-leafhopper', 'rice-bug', 'stem-borer']

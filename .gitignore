@@ -1,0 +1,95 @@
+# Secrets and local environment files
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.env
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.ipynb_checkpoints/
+
+# Python application data and generated outputs
+**/uploads/*
+!**/uploads/.gitkeep
+eval_artifacts/
+runs/
+
+# Local SQL files and backups
+# (04 contains demo accounts' password hashes: keep it out of the repository)
+/SQL/04_all_municipalities_data.sql
+/_backups/
+
+# Trained model binaries
+# The API on Vercel loads rice-pest-api/models/rice_pest.onnx from the
+# repository, so that one file must be committed (12 MB, under GitHub's limit).
+*.pt
+*.onnx
+!rice-pest-api/models/rice_pest.onnx
+*.weights
+*.h5
+*.pkl
+
+# Vercel
+.vercel/
+
+# Node.js and web build output
+node_modules/
+.npm/
+.eslintcache
+dist/
+
+# Flutter and Dart
+.dart_tool/
+.fvm/
+.packages
+.pub-cache/
+.pub/
+.flutter-plugins
+.flutter-plugins-dependencies
+build/
+*.apk
+*.aab
+*.ipa
+
+# Android and local machine configuration
+.gradle/
+**/local.properties
+**/ios/Flutter/Generated.xcconfig
+**/ios/Flutter/flutter_export_environment.sh
+**/ios/Flutter/.last_build_id
+**/ios/Flutter/ephemeral/
+
+# Local databases, logs, and temporary files
+*.sqlite
+*.sqlite3
+*.db
+*.log
+*.tmp
+*.swp
+*.swo
+
+# IDE and operating system files
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.iml
+.DS_Store
+Thumbs.db
+ehthumbs.db

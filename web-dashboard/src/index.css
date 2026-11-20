@@ -1,0 +1,68 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-canvas font-sans text-ink antialiased;
+  }
+}
+
+@layer components {
+  .input {
+    @apply w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink placeholder:text-muted focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-100 disabled:bg-canvas disabled:text-muted;
+  }
+  .label {
+    @apply mb-1 block text-xs font-semibold uppercase tracking-wide text-ink2;
+  }
+  .th {
+    @apply whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-ink2;
+  }
+  .td {
+    @apply px-4 py-3 align-middle;
+  }
+
+  /* Sign-in form fields on the photo background. */
+  .auth-input {
+    @apply w-full rounded-xl border border-white/60 bg-transparent py-4 pl-12 pr-4 text-base text-white shadow-none placeholder:text-white/75 transition focus:border-gold-300 focus:bg-white/10 focus:outline-none focus:ring-4 focus:ring-gold-300/35;
+  }
+  .auth-input[aria-invalid='true'] {
+    @apply border-red-400 ring-4 ring-red-400/25;
+  }
+}
+
+/* Sidebar scroll area: thin, subtle scrollbar on the dark background. */
+.nav-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(255 255 255 / 0.15) transparent;
+}
+.nav-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.nav-scroll::-webkit-scrollbar-thumb {
+  background: rgb(255 255 255 / 0.15);
+  border-radius: 999px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Leaflet popups inherit the app font. */
+.leaflet-container {
+  font: inherit;
+}
+.leaflet-container .leaflet-control-attribution {
+  font-size: 10px;
+}

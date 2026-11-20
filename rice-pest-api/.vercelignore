@@ -1,0 +1,16 @@
+# Not needed at runtime; keeps the function under Vercel's size limit.
+venv/
+.venv/
+uploads/
+runs/
+eval_artifacts/
+tests/
+tools/
+sql/
+alembic/
+.vscode/
+best.pt
+data.yaml
+__pycache__/
+*.pyc
+.env

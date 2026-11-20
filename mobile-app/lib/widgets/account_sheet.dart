@@ -1,0 +1,195 @@
+import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
+
+import '../app_router.dart';
+import '../controllers/auth_controller.dart';
+import '../services/local_store.dart';
+import '../services/sync_service.dart';
+import '../theme.dart';
+import 'app_widgets.dart';
+import 'brand.dart';
+import 'user_avatar.dart';
+
+/// The user's profile picture (or initials) that opens the account sheet
+/// (who is signed in, edit profile, send waiting observations, sign out).
+/// [onDark] styles it for the gradient hero header.
+class AccountButton extends StatelessWidget {
+  final bool onDark;
+  const AccountButton({super.key, this.onDark = false});
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: 'Account',
+      child: InkResponse(
+        onTap: () => showAccountSheet(context),
+        radius: 28,
+        child: UserAvatar(size: 48, onDark: onDark),
+      ),
+    );
+  }
+}
+
+Future<void> showAccountSheet(BuildContext context) {
+  return showModalBottomSheet<void>(
+    context: context,
+    builder: (_) => const _AccountSheet(),
+  );
+}
+
+class _AccountSheet extends StatefulWidget {
+  const _AccountSheet();
+
+  @override
+  State<_AccountSheet> createState() => _AccountSheetState();
+}
+
+class _AccountSheetState extends State<_AccountSheet> {
+  bool _syncing = false;
+  bool? _hasWaiting;
+
+  @override
+  void initState() {
+    super.initState();
+    LocalStore.instance.hasPendingWork().then((v) {
+      if (mounted) setState(() => _hasWaiting = v);
+    }).catchError((_) {
+      if (mounted) setState(() => _hasWaiting = false);
+    });
+  }
+
+  Future<void> _syncNow() async {
+    setState(() => _syncing = true);
+    await SyncService.syncAll();
+    final waiting = await LocalStore.instance.hasPendingWork();
+    if (!mounted) return;
+    setState(() {
+      _syncing = false;
+      _hasWaiting = waiting;
+    });
+  }
+
+  Future<void> _signOut() async {
+    final auth = AuthControllerImpl.instance;
+    if (await LocalStore.instance.hasPendingWork() && mounted) {
+      final leave = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Some work has not been sent'),
+          content: const Text(
+            'You have observations or treatments that are still on this phone. '
+            'They are sent when you sign in again with this account. '
+            'If a different account signs in on this phone, they are deleted.',
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Stay signed in')),
+            TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Sign out')),
+          ],
+        ),
+      );
+      if (leave != true) return;
+    }
+    if (!mounted) return;
+    Navigator.of(context).pop();
+    auth.logout();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = AuthControllerImpl.instance.session;
+    final roleLabel = switch (s?.role) {
+      AppRole.technician => 'Agricultural technician',
+      AppRole.agriculturist => 'Agriculturist',
+      _ => 'Farmer',
+    };
+    final place = [s?.barangay ?? '', s?.municipality ?? ''].where((x) => x.isNotEmpty).join(', ');
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(AppSpacing.hPad, 0, AppSpacing.hPad, AppSpacing.lg),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                const UserAvatar(size: 58),
+                const SizedBox(width: AppSpacing.md),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(s?.name ?? '', style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w800)),
+                      Text(s?.email ?? '', style: const TextStyle(color: AppColors.textMuted, fontSize: 13)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.md),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                AppChip(label: roleLabel, color: AppColors.primary, icon: Icons.badge_outlined),
+                if (place.isNotEmpty) AppChip(label: place, color: AppColors.textSecondary, icon: Icons.location_on_outlined),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.lg),
+            AppCard(
+              child: Row(
+                children: [
+                  IconTile(
+                    icon: _hasWaiting == true ? Icons.cloud_upload_outlined : Icons.cloud_done_outlined,
+                    color: _hasWaiting == true ? AppColors.orange : AppColors.primary,
+                    size: 40,
+                  ),
+                  const SizedBox(width: AppSpacing.md),
+                  Expanded(
+                    child: Text(
+                      _hasWaiting == null
+                          ? 'Checking…'
+                          : _hasWaiting!
+                              ? 'Some observations are waiting for signal.'
+                              : 'Everything is sent.',
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                  if (_hasWaiting == true)
+                    AppPrimaryButton(
+                      label: 'Send now',
+                      compact: true,
+                      expanded: false,
+                      loading: _syncing,
+                      onPressed: _syncNow,
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: AppSpacing.lg),
+            AppPrimaryButton(
+              label: 'Edit profile',
+              icon: Icons.manage_accounts_rounded,
+              onPressed: () {
+                final router = GoRouter.of(context);
+                Navigator.of(context).pop();
+                router.push(AppRouter.profile);
+              },
+            ),
+            const SizedBox(height: AppSpacing.md),
+            AppSecondaryButton(
+              label: 'Sign out',
+              icon: Icons.logout_rounded,
+              color: AppColors.danger,
+              onPressed: _signOut,
+            ),
+            const SizedBox(height: AppSpacing.md),
+            const Center(
+              child: Text('$kAppName · Mobile', style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
