@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
@@ -443,7 +444,16 @@ class _F30NewObservationState extends State<F30NewObservation> {
           if (_photo != null) ...[
             ClipRRect(
               borderRadius: BorderRadius.circular(AppRadius.md),
-              child: AspectRatio(aspectRatio: 3 / 4, child: localImage(_photo!, fit: BoxFit.cover)),
+              child: AspectRatio(
+                aspectRatio: 3 / 4,
+                child: ColoredBox(
+                  color: Colors.black,
+                  child: localImage(
+                    _photo!,
+                    fit: kIsWeb ? BoxFit.contain : BoxFit.cover,
+                  ),
+                ),
+              ),
             ),
             const SizedBox(height: AppSpacing.lg),
             AppPrimaryButton(label: 'Use this photo', icon: Icons.check_rounded, onPressed: _next),

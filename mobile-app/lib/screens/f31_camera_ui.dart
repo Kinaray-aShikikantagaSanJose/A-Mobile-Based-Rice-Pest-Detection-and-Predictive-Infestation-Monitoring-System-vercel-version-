@@ -123,7 +123,7 @@ class F31CameraUiState extends State<F31CameraUi>
     );
     final controller = CameraController(
       backCamera,
-      ResolutionPreset.high,
+      kIsWeb ? ResolutionPreset.veryHigh : ResolutionPreset.high,
       enableAudio: false,
       imageFormatGroup: ImageFormatGroup.jpeg,
     );
@@ -451,7 +451,7 @@ class F31CameraUiState extends State<F31CameraUi>
   Widget _buildCapturedPhoto(String path) {
     return localImage(
       path,
-      fit: BoxFit.cover,
+      fit: kIsWeb ? BoxFit.contain : BoxFit.cover,
       errorBuilder: (context, error, stackTrace) => const ColoredBox(color: Colors.black),
     );
   }
@@ -503,11 +503,17 @@ class F31CameraUiState extends State<F31CameraUi>
             child: Center(child: CircularProgressIndicator(color: Colors.white)),
           );
         }
+        final previewSize = controller.value.previewSize;
+        // Browser captures the raw video frame, so preserve its native aspect ratio.
         return FittedBox(
-          fit: BoxFit.cover,
+          fit: kIsWeb ? BoxFit.contain : BoxFit.cover,
           child: SizedBox(
-            width: controller.value.previewSize?.height ?? 1,
-            height: controller.value.previewSize?.width ?? 1,
+            width: previewSize == null
+                ? 1
+                : (kIsWeb ? previewSize.width : previewSize.height),
+            height: previewSize == null
+                ? 1
+                : (kIsWeb ? previewSize.height : previewSize.width),
             child: CameraPreview(controller),
           ),
         );
@@ -569,8 +575,19 @@ class F31CameraUiState extends State<F31CameraUi>
   Widget _buildAlignmentFrame() {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final double width = (constraints.maxWidth * 0.78).clamp(0.0, 280.0);
-        final double height = (constraints.maxHeight * 0.9).clamp(0.0, 380.0);
+        final double maxWidth = (constraints.maxWidth * 0.78).clamp(0.0, 280.0);
+        final double maxHeight = (constraints.maxHeight * 0.9).clamp(0.0, 380.0);
+        final previewSize = _controller?.value.previewSize;
+        final double previewAspect = kIsWeb &&
+                previewSize != null &&
+                previewSize.width > 0 &&
+                previewSize.height > 0
+            ? previewSize.width / previewSize.height
+            : 3 / 4;
+        final double width = kIsWeb
+            ? (maxWidth < maxHeight * previewAspect ? maxWidth : maxHeight * previewAspect)
+            : maxWidth;
+        final double height = kIsWeb ? width / previewAspect : maxHeight;
         return Center(
           child: SizedBox(
             width: width,
