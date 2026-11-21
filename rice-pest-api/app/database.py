@@ -33,8 +33,8 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise RuntimeError(
         "DATABASE_URL is not set. Use the Supabase connection string "
-        "(Project Settings > Database > Connection string > Session pooler), e.g. "
-        "postgresql://postgres.<project-ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres"
+        "(Transaction pooler on Vercel, or a direct PostgreSQL URL locally), e.g. "
+        "postgresql://postgres.<project-ref>:<password>@aws-1-<region>.pooler.supabase.com:6543/postgres"
     )
 # The original system used two databases (rice_pest_db2 for accounts,
 # rice_pest_geo for observations). On Supabase both live in one database, so
@@ -61,18 +61,18 @@ def _make_engine(url: str):
         **({"poolclass": NullPool} if SERVERLESS else {}),
     )
 
-    # Each database session uses the farmers' timezone, so timestamps come back
-    # in local time. Done with SET instead of the "options" startup parameter,
-    # which Supabase's pooler doesn't pass through. (supabase/01_schema.sql also
-    # sets it as the database default, which covers the transaction pooler.)
-    @event.listens_for(engine, "connect")
-    def _set_timezone(dbapi_conn, _record):
-        cur = dbapi_conn.cursor()
-        try:
-            cur.execute("SET TIME ZONE %s", (APP_TIMEZONE,))
-        finally:
-            cur.close()
-        dbapi_conn.commit()
+    # Transaction pooling cannot guarantee session state survives between
+    # transactions. The Supabase schema sets the database default timezone;
+    # direct PostgreSQL connections can still set it per connection.
+    if not SERVERLESS:
+        @event.listens_for(engine, "connect")
+        def _set_timezone(dbapi_conn, _record):
+            cur = dbapi_conn.cursor()
+            try:
+                cur.execute("SET TIME ZONE %s", (APP_TIMEZONE,))
+            finally:
+                cur.close()
+            dbapi_conn.commit()
 
     return engine
 

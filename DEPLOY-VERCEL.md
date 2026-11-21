@@ -33,8 +33,9 @@ Order: Supabase → API → Dashboard → Mobile web app → update the API's CO
      `SQL/03_...` and `SQL/04_...` (optional; 04 is kept out of Git).
    * **Keep your current data:** see "Move the existing data" below instead.
 4. Collect, for the API:
-   * **Connect** (top bar) → Connection string → **Session pooler** URI
-     → `DATABASE_URL` (put your password in it).
+   * **Connect** (top bar) → **Shared Pooler** → **Transaction** connection
+     string (port `6543`) → `DATABASE_URL`. Percent-encode any special
+     characters in the database password before inserting it.
    * **Project Settings → API**: Project URL → `SUPABASE_URL`;
      `service_role` secret → `SUPABASE_SERVICE_ROLE_KEY`.
 
@@ -46,7 +47,7 @@ Order: Supabase → API → Dashboard → Mobile web app → update the API's CO
 
    | Name | Value |
    |------|-------|
-   | `DATABASE_URL` | Supabase session pooler URI |
+   | `DATABASE_URL` | Supabase shared transaction pooler URI (port `6543`) |
    | `SUPABASE_URL` | `https://<ref>.supabase.co` |
    | `SUPABASE_SERVICE_ROLE_KEY` | service_role key |
    | `JWT_SECRET_KEY` | 64 random hex chars (`python -c "import secrets;print(secrets.token_hex(32))"`) |
@@ -101,14 +102,16 @@ $pg = "C:\Program Files\PostgreSQL\18\bin"
     -t scans -t treatment_library -t treatments -t level_criteria -t scan_reviews -t notifications `
     -d "postgresql://postgres@localhost:5432/rice_pest_geo" -f field.sql
 
-$supa = "<Supabase session pooler URI>"
+$supa = "<Supabase session pooler or direct PostgreSQL URI>"
 & "$pg\psql.exe" $supa -v ON_ERROR_STOP=1 -c "SET session_replication_role = replica" -f accounts.sql -f field.sql
 ```
 
 (`session_replication_role = replica` lets the rows load regardless of
 foreign-key order; scans and treatments reference each other.) If psql stops
 at `unrecognized configuration parameter`, delete that `SET` line at the top of
-the .sql file and run it again.
+the .sql file and run it again. Use a session pooler or direct connection for
+this migration command; do not use the transaction pooler because it does not
+preserve session-level settings such as `session_replication_role`.
 
 Photos (reads the original folder only, never changes it):
 
@@ -130,7 +133,9 @@ API (`rice-pest-api`)
   so app and dashboard URLs are unchanged). Without `SUPABASE_URL` it falls
   back to the local `uploads/` folder for local development.
 * `app/database.py`: one Supabase database (`GEO_DATABASE_URL` now defaults
-  to `DATABASE_URL`), no connection pool on Vercel, SSL, timezone via `SET`.
+  to `DATABASE_URL`), no connection pool on Vercel, SSL, timezone from the
+  database default on Vercel (the schema sets `Asia/Manila`) and via `SET` for
+  direct local connections.
 * `app/main.py`: no LAN discovery on Vercel; HTTPS detected from Vercel's
   proxy header; optional `CORS_ALLOWED_ORIGIN_REGEX`.
 * `app/sync_router.py`, `app/avatars.py`, `app/auth.py`, `app/reanalyze.py`,
