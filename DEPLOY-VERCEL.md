@@ -37,7 +37,9 @@ Order: Supabase → API → Dashboard → Mobile web app → update the API's CO
      string (port `6543`) → `DATABASE_URL`. Percent-encode any special
      characters in the database password before inserting it.
    * **Project Settings → API**: Project URL → `SUPABASE_URL`;
-     `service_role` secret → `SUPABASE_SERVICE_ROLE_KEY`.
+     create/copy a Secret API key (`sb_secret_...`) → `SUPABASE_SECRET_KEY`.
+     The key stays server-side and is sent only in the `apikey` header. Existing
+     deployments may continue using `SUPABASE_SERVICE_ROLE_KEY` until migrated.
 
 ## 2. API (`rice-pest-api`)
 
@@ -49,7 +51,7 @@ Order: Supabase → API → Dashboard → Mobile web app → update the API's CO
    |------|-------|
    | `DATABASE_URL` | Supabase shared transaction pooler URI (port `6543`) |
    | `SUPABASE_URL` | `https://<ref>.supabase.co` |
-   | `SUPABASE_SERVICE_ROLE_KEY` | service_role key |
+   | `SUPABASE_SECRET_KEY` | Supabase Secret API key (`sb_secret_...`) |
    | `JWT_SECRET_KEY` | 64 random hex chars (`python -c "import secrets;print(secrets.token_hex(32))"`) |
    | `APP_ENV` | `production` |
    | `HTTPS_ONLY` | `true` |
@@ -119,7 +121,7 @@ Photos (reads the original folder only, never changes it):
 cd rice-pest-api
 pip install -r requirements.txt
 $env:SUPABASE_URL = "https://<ref>.supabase.co"
-$env:SUPABASE_SERVICE_ROLE_KEY = "<service_role key>"
+$env:SUPABASE_SECRET_KEY = "<Supabase Secret API key>"
 python tools\upload_photos_to_supabase.py "C:\Users\user\Downloads\CAPSTONE (MAIN)\rice-pest-api\uploads"
 ```
 

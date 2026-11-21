@@ -7,11 +7,12 @@ buckets (created by supabase/01_schema.sql):
     scans    observation photos, key = scans.image_filename
     avatars  profile pictures,   key = users.avatar_path
 
-Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY to use Supabase. Without them
-(local development) files are kept in uploads/ and uploads/avatars/ like the
-original server. The buckets are private: the API reads the bytes with the
-service key and serves them after its own permission checks, so the apps keep
-calling the same endpoints.
+Set SUPABASE_URL and SUPABASE_SECRET_KEY to use Supabase. The secret API key
+is sent in the apikey header only. SUPABASE_SERVICE_ROLE_KEY remains supported
+for existing deployments. Without a configured key (local development), files
+are kept in uploads/ and uploads/avatars/ like the original server. The buckets
+are private: the API reads the bytes with the key and serves them after its own
+permission checks, so the apps keep calling the same endpoints.
 """
 import logging
 import os
@@ -27,7 +28,9 @@ SCANS = "scans"
 AVATARS = "avatars"
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
-SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+SUPABASE_SECRET_KEY = os.getenv("SUPABASE_SECRET_KEY", "").strip()
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+SUPABASE_KEY = SUPABASE_SECRET_KEY or SUPABASE_SERVICE_ROLE_KEY
 TIMEOUT_S = float(os.getenv("STORAGE_TIMEOUT_S", "20"))
 
 _ROOT = os.path.join(os.path.dirname(os.path.dirname(__file__)), "uploads")
@@ -50,7 +53,9 @@ def _url(bucket: str, key: str) -> str:
 
 def _request(method: str, bucket: str, key: str, data: Optional[bytes] = None,
              content_type: Optional[str] = None) -> Optional[bytes]:
-    headers = {"Authorization": f"Bearer {SUPABASE_KEY}", "apikey": SUPABASE_KEY}
+    headers = {"apikey": SUPABASE_KEY}
+    if not SUPABASE_SECRET_KEY:
+        headers["Authorization"] = f"Bearer {SUPABASE_KEY}"
     if content_type:
         headers["Content-Type"] = content_type
         headers["x-upsert"] = "true"
