@@ -1,5 +1,6 @@
 fastapi
 sqlalchemy
+psycopg[binary]
 psycopg2-binary
 bcrypt
 python-jose[cryptography]
