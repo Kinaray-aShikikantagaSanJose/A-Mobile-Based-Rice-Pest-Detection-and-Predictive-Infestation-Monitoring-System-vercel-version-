@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { Badge, ErrorNote, Loading, Notice, PageHeader } from '../components/ui.jsx';
+import { useT } from '../i18n/index.jsx';
 import { useAsync } from '../lib.js';
 
 const STAGE_TONE = { Vegetative: 'green', Reproductive: 'orange', Ripening: 'gray' };
 
 /** Example photo from the API, or a placeholder until the group adds one. */
 function GuidePhoto({ path, alt }) {
+  const t = useT();
   const [url, setUrl] = useState(null);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
@@ -32,17 +34,18 @@ function GuidePhoto({ path, alt }) {
   }
   return (
     <div className="flex aspect-square w-full items-center justify-center rounded-xl border border-dashed border-line bg-canvas px-4 text-center text-xs text-muted">
-      {path && !failed ? 'Loading photo…' : 'Example photo not added yet'}
+      {path && !failed ? t('Loading photo…') : t('Example photo not added yet')}
     </div>
   );
 }
 
 function Stages({ stages }) {
+  const t = useT();
   return (
     <div className="flex flex-wrap gap-1.5">
       {stages.map((s) => (
         <Badge key={s} tone={STAGE_TONE[s] || 'gray'}>
-          {s}
+          {t(s)}
         </Badge>
       ))}
     </div>
@@ -51,13 +54,16 @@ function Stages({ stages }) {
 
 /** "What to look for": the four pests the model detects and every damage symptom reviewers check. */
 export default function GuidePage() {
+  const t = useT();
   const res = useAsync(() => api.guide(), []);
   const g = res.data;
   return (
     <div>
       <PageHeader
-        title="What to look for"
-        description="The four pests the system handles and the damage symptoms reviewers tick, with the crop stage when each appears. Farmers see the same guide in the mobile app."
+        title={t('What to look for')}
+        description={t(
+          'The four pests the system handles and the damage symptoms reviewers tick, with the crop stage when each appears. Farmers see the same guide in the mobile app.',
+        )}
       />
       <ErrorNote message={res.error} onRetry={res.reload} />
       {!g && res.loading && <Loading />}
@@ -71,21 +77,21 @@ export default function GuidePage() {
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
                     <h2 className="text-lg font-bold text-ink">{p.name}</h2>
-                    <span className="rounded-full bg-canvas px-2 py-0.5 font-mono text-[11px] text-ink2">model class: {p.model_label}</span>
+                    <span className="rounded-full bg-canvas px-2 py-0.5 font-mono text-[11px] text-ink2">{t('model class: {label}', { label: p.model_label })}</span>
                   </div>
                   <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-ink">
                     {p.signs.map((s) => (
                       <li key={s}>{s}</li>
                     ))}
                   </ul>
-                  <div className="mt-3 text-xs font-semibold uppercase tracking-wide text-ink2">Crop stage when it appears</div>
+                  <div className="mt-3 text-xs font-semibold uppercase tracking-wide text-ink2">{t('Crop stage when it appears')}</div>
                   <div className="mt-1">
                     <Stages stages={p.stages} />
                   </div>
                   <p className="mt-1 text-xs text-ink2">{p.stage_note}</p>
                 </div>
               </div>
-              <div className="mt-5 text-xs font-semibold uppercase tracking-wide text-ink2">Symptoms to check</div>
+              <div className="mt-5 text-xs font-semibold uppercase tracking-wide text-ink2">{t('Symptoms to check')}</div>
               <div className="mt-2 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
                 {g.symptoms
                   .filter((s) => s.pest === p.key)

@@ -8,8 +8,11 @@ import 'package:flutter/widget_previews.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart' as p;
+import '../app_router.dart';
+import '../l10n/app_language.dart';
 import '../main.dart' show cameras;
 import '../platform/local_files.dart';
+import '../platform/web_camera.dart';
 import '../theme.dart';
 import '../widgets/app_widgets.dart';
 import '../widgets/motion.dart';
@@ -27,11 +30,13 @@ const String _stepLabel = 'Photo';
 /// Flash button order: each tap moves to the next mode.
 const List<FlashMode> _flashCycle = [FlashMode.off, FlashMode.auto, FlashMode.always, FlashMode.torch];
 
+/// Flash button caption (English; translated where it is shown). Whole
+/// phrases, so short words like "On" don't clash with other screens.
 String _flashLabel(FlashMode m) => switch (m) {
-      FlashMode.auto => 'Auto',
-      FlashMode.always => 'On',
-      FlashMode.torch => 'Light',
-      _ => 'Off',
+      FlashMode.auto => 'Flash: Auto',
+      FlashMode.always => 'Flash: On',
+      FlashMode.torch => 'Flash: Light',
+      _ => 'Flash: Off',
     };
 
 IconData _flashIcon(FlashMode m) => switch (m) {
@@ -39,6 +44,17 @@ IconData _flashIcon(FlashMode m) => switch (m) {
       FlashMode.always => Icons.flash_on_rounded,
       FlashMode.torch => Icons.flashlight_on_rounded,
       _ => Icons.flash_off_rounded,
+    };
+
+/// Why the browser camera could not start (English; translated when shown).
+String _webCameraErrorText(WebCameraError kind) => switch (kind) {
+      WebCameraError.notAllowed =>
+        'Camera access is blocked for this site. Allow it in the browser settings, then try again.',
+      WebCameraError.notFound => 'No camera was found on this device.',
+      WebCameraError.inUse => 'The camera is being used by another app. Close it, then try again.',
+      WebCameraError.insecureContext => 'The camera needs a secure (HTTPS) connection.',
+      WebCameraError.unsupported => 'This browser cannot use the camera. Pick a photo from the gallery instead.',
+      _ => 'Could not start the camera.',
     };
 
 class F31CameraUi extends StatefulWidget {
@@ -50,21 +66,28 @@ class F31CameraUi extends StatefulWidget {
 
 class F31CameraUiState extends State<F31CameraUi>
     with WidgetsBindingObserver, SingleTickerProviderStateMixin {
+  // Android / iOS: the camera plugin.
   CameraController? _controller;
   Future<void>? _initializeControllerFuture;
+  // Web: a <video> fed by getUserMedia (lib/platform/web_camera.dart). The
+  // browser asks for camera permission when it starts.
+  WebCameraController? _webCamera;
   bool _isCapturing = false;
   bool _isPicking = false;
   bool _isNavigating = false;
   bool _showFlash = false;
   bool _wasPaused = false;
-  // Web: the camera list is only read when this screen opens (reading it
-  // asks for camera permission), see _setupCamera.
-  bool _lookingForCameras = false;
-  bool _webCamerasChecked = false;
   FlashMode _flashMode = FlashMode.off;
+  // English text (and placeholders); translated in build.
   String? _errorMessage;
+  Map<String, Object?>? _errorVars;
+  bool _canRetry = true;
   String? _capturedImagePath;
   Timer? _flashTimer;
+  // Tap-to-focus ring (position in the preview, restarts on every tap).
+  Offset? _focusPoint;
+  int _focusTapId = 0;
+  Timer? _focusRingTimer;
 
   // Breathing pulse animation for viewfinder corner brackets
   late final AnimationController _pulseController;
@@ -91,6 +114,13 @@ class F31CameraUiState extends State<F31CameraUi>
 
   bool get _reduceMotion => MediaQuery.maybeDisableAnimationsOf(context) ?? false;
 
+  /// The live camera is running and a photo can be taken.
+  bool get _cameraReady {
+    if (_errorMessage != null) return false;
+    if (kIsWeb) return _webCamera?.isStarted ?? false;
+    return _controller?.value.isInitialized ?? false;
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -104,16 +134,14 @@ class F31CameraUiState extends State<F31CameraUi>
   }
 
   void _setupCamera() {
-    if (kIsWeb && cameras.isEmpty && !_webCamerasChecked) {
-      _findWebCameras();
+    if (kIsWeb) {
+      unawaited(_startWebCamera());
       return;
     }
-    // A later retry (e.g. after allowing the camera) looks again.
-    _webCamerasChecked = false;
     if (cameras.isEmpty) {
-      _errorMessage = kIsWeb
-          ? 'No camera found, or camera access is blocked for this site. Allow it in the browser settings, then try again.'
-          : 'No camera was found on this device.';
+      _errorMessage = 'No camera was found on this device.';
+      _errorVars = null;
+      _canRetry = false;
       if (mounted) setState(() {});
       return;
     }
@@ -123,63 +151,133 @@ class F31CameraUiState extends State<F31CameraUi>
     );
     final controller = CameraController(
       backCamera,
-      kIsWeb ? ResolutionPreset.veryHigh : ResolutionPreset.high,
+      ResolutionPreset.high,
       enableAudio: false,
       imageFormatGroup: ImageFormatGroup.jpeg,
     );
     _controller = controller;
     _errorMessage = null;
+    _errorVars = null;
+    _canRetry = true;
     _initializeControllerFuture = controller.initialize().then((_) async {
       // The plugin defaults to auto flash; apply the mode the button shows.
       try {
         await controller.setFlashMode(_flashMode);
+      } catch (_) {}
+      // Continuous autofocus and auto exposure (best effort: not every
+      // camera supports them).
+      try {
+        await controller.setFocusMode(FocusMode.auto);
+      } catch (_) {}
+      try {
+        await controller.setExposureMode(ExposureMode.auto);
       } catch (_) {}
       if (!mounted || _controller != controller) return;
       setState(() => _errorMessage = null);
     }).catchError((Object e) {
       if (!mounted || _controller != controller) return;
       setState(() {
-        _errorMessage = e is CameraException
-            ? (e.code.contains('AccessDenied')
-                ? 'Camera access is off. Allow it in your phone settings, then try again.'
-                : 'Camera error: ${e.description ?? e.code}')
-            : 'Could not start the camera.';
+        _errorVars = null;
+        if (e is CameraException && e.code.contains('AccessDenied')) {
+          _errorMessage = 'Camera access is off. Allow it in your phone settings, then try again.';
+        } else if (e is CameraException) {
+          _errorMessage = 'Camera error: {error}';
+          _errorVars = {'error': e.description ?? e.code};
+        } else {
+          _errorMessage = 'Could not start the camera.';
+        }
       });
     });
     if (mounted) setState(() {});
   }
 
-  Future<void> _findWebCameras() async {
-    if (_lookingForCameras) return;
-    _lookingForCameras = true;
+  /// Browser: asks for the camera (rear camera preferred) and starts the
+  /// live view. Errors (blocked, no camera, in use, no HTTPS) are shown with
+  /// "Try again" where that can help.
+  Future<void> _startWebCamera() async {
+    final WebCameraController camera = WebCameraController();
+    _webCamera = camera;
+    _errorMessage = null;
+    _errorVars = null;
+    _canRetry = true;
+    camera.addListener(_onWebCameraChanged);
+    if (mounted) setState(() {});
     try {
-      cameras = await availableCameras();
+      await camera.start();
     } catch (e) {
+      if (!mounted || _webCamera != camera) return;
+      final WebCameraError kind = e is WebCameraException ? e.kind : WebCameraError.failed;
+      if (kind == WebCameraError.stopped) return;
       debugPrint('Camera init error: $e');
+      setState(() => _showWebCameraError(kind));
+      return;
     }
-    _lookingForCameras = false;
-    _webCamerasChecked = true;
-    if (mounted) _setupCamera();
+    if (!mounted || _webCamera != camera) return;
+    // Keep the light on after the camera restarts (tab hidden and back).
+    if (_flashMode == FlashMode.torch) {
+      if (!camera.torchSupported) {
+        _flashMode = FlashMode.off;
+      } else if (_capturedImagePath == null) {
+        await camera.setTorch(true);
+      }
+    }
+    if (mounted && _webCamera == camera) setState(() {});
+  }
+
+  void _showWebCameraError(WebCameraError kind) {
+    _errorMessage = _webCameraErrorText(kind);
+    _errorVars = null;
+    // Reloading won't add HTTPS or getUserMedia; everything else may work later.
+    _canRetry = kind != WebCameraError.insecureContext && kind != WebCameraError.unsupported;
+  }
+
+  /// Browser camera changed: started, frame size / fit, torch, or it stopped
+  /// on its own (unplugged, taken by another app).
+  void _onWebCameraChanged() {
+    if (!mounted) return;
+    final WebCameraController? camera = _webCamera;
+    setState(() {
+      final WebCameraError? error = camera?.error;
+      if (camera != null && error != null && !camera.isStarted && _errorMessage == null) {
+        _showWebCameraError(error);
+      }
+    });
+  }
+
+  void _disposeWebCamera(WebCameraController? camera) {
+    if (camera == null) return;
+    camera.removeListener(_onWebCameraChanged);
+    camera.dispose();
   }
 
   /// Frees the camera (app backgrounded) so other apps can use it.
   void _releaseCamera() {
     final controller = _controller;
+    final webCamera = _webCamera;
     _controller = null;
+    _webCamera = null;
     _initializeControllerFuture = null;
     if (mounted) setState(() {});
     controller?.dispose();
+    _disposeWebCamera(webCamera);
   }
 
   void _retryCamera() {
     final old = _controller;
+    final oldWeb = _webCamera;
     _controller = null;
+    _webCamera = null;
     old?.dispose();
+    _disposeWebCamera(oldWeb);
     _setupCamera();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (kIsWeb) {
+      _onWebLifecycle(state);
+      return;
+    }
     if (state == AppLifecycleState.paused) _wasPaused = true;
     if (state == AppLifecycleState.inactive) {
       final controller = _controller;
@@ -199,17 +297,49 @@ class F31CameraUiState extends State<F31CameraUi>
     }
   }
 
+  /// Browser: the camera stops while the tab is hidden (other tab or app,
+  /// screen off) and starts again when it is visible. Only losing focus
+  /// (address bar, file chooser, permission prompt) keeps it running.
+  void _onWebLifecycle(AppLifecycleState state) {
+    if (state == AppLifecycleState.hidden || state == AppLifecycleState.paused) {
+      _wasPaused = true;
+      if (_webCamera != null) _releaseCamera();
+    } else if (state == AppLifecycleState.resumed) {
+      final bool cameBack = _wasPaused;
+      _wasPaused = false;
+      if (_webCamera == null) {
+        _setupCamera();
+      } else if (_errorMessage != null && cameBack) {
+        // Back from the browser settings: the camera may be allowed now.
+        _retryCamera();
+      }
+    }
+  }
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _flashTimer?.cancel();
+    _focusRingTimer?.cancel();
     _controller?.dispose();
+    _disposeWebCamera(_webCamera);
+    _webCamera = null;
     _pulseController.dispose();
     super.dispose();
   }
 
+  void _showSnack(String text, {Duration? duration}) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Text(text),
+        duration: duration ?? const Duration(milliseconds: 4000),
+      ));
+  }
+
   /// Off -> Auto -> On -> Light (torch, stays on for dark spots and traps).
   Future<void> _cycleFlash() async {
+    if (kIsWeb) return _toggleWebLight();
     final controller = _controller;
     if (controller == null || !controller.value.isInitialized) return;
     final FlashMode next = _flashCycle[(_flashCycle.indexOf(_flashMode) + 1) % _flashCycle.length];
@@ -218,34 +348,103 @@ class F31CameraUiState extends State<F31CameraUi>
       await controller.setFlashMode(next);
       if (!mounted) return;
       setState(() => _flashMode = next);
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(SnackBar(
-          content: Text('Flash: ${_flashLabel(next)}'),
-          duration: const Duration(milliseconds: 900),
-        ));
+      _showSnack(
+        context.tr(_flashLabel(next)),
+        duration: const Duration(milliseconds: 900),
+      );
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(const SnackBar(content: Text('Flash is not available on this camera.')));
+      _showSnack(context.tr('Flash is not available on this camera.'));
     }
+  }
+
+  /// Browser: only a torch (Off <-> Light), and only where the camera has one.
+  Future<void> _toggleWebLight() async {
+    final camera = _webCamera;
+    if (camera == null || !camera.isStarted) return;
+    HapticFeedback.selectionClick();
+    if (!camera.torchSupported) {
+      _showSnack(context.tr('Flash is not available on this camera.'));
+      return;
+    }
+    final FlashMode next = _flashMode == FlashMode.torch ? FlashMode.off : FlashMode.torch;
+    final bool ok = await camera.setTorch(next == FlashMode.torch);
+    if (!mounted) return;
+    if (!ok) {
+      _showSnack(context.tr('Flash is not available on this camera.'));
+      return;
+    }
+    setState(() => _flashMode = next);
+    _showSnack(
+      context.tr(_flashLabel(next)),
+      duration: const Duration(milliseconds: 900),
+    );
   }
 
   /// The torch would stay lit while the photo is checked; switch it off then.
   Future<void> _lightOffForReview() async {
+    if (_flashMode != FlashMode.torch) return;
+    if (kIsWeb) {
+      await _webCamera?.setTorch(false);
+      return;
+    }
     final controller = _controller;
-    if (_flashMode != FlashMode.torch || controller == null || !controller.value.isInitialized) return;
+    if (controller == null || !controller.value.isInitialized) return;
     try {
       await controller.setFlashMode(FlashMode.off);
     } catch (_) {}
   }
 
   Future<void> _restoreFlash() async {
+    if (_flashMode != FlashMode.torch) return;
+    if (kIsWeb) {
+      await _webCamera?.setTorch(true);
+      return;
+    }
     final controller = _controller;
-    if (_flashMode != FlashMode.torch || controller == null || !controller.value.isInitialized) return;
+    if (controller == null || !controller.value.isInitialized) return;
     try {
       await controller.setFlashMode(_flashMode);
+    } catch (_) {}
+  }
+
+  /// Tap on the live view: focus there (where the camera allows it) and show
+  /// a short focus ring. Continuous autofocus keeps running either way.
+  void _onPreviewTap(Offset local, Size view) {
+    if (!_cameraReady || _capturedImagePath != null || view.isEmpty) return;
+    setState(() {
+      _focusPoint = local;
+      _focusTapId++;
+    });
+    _focusRingTimer?.cancel();
+    _focusRingTimer = Timer(const Duration(milliseconds: 1300), () {
+      if (mounted) setState(() => _focusPoint = null);
+    });
+    if (kIsWeb) {
+      _webCamera?.focusAt(Offset(local.dx / view.width, local.dy / view.height));
+    } else {
+      _focusNativeAt(local, view);
+    }
+  }
+
+  Future<void> _focusNativeAt(Offset local, Size view) async {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) return;
+    final Size? previewSize = controller.value.previewSize;
+    if (previewSize == null) return;
+    // The preview is shown in portrait (height x width) and covers the screen.
+    final Offset? point = previewPointToFrame(
+      local,
+      view,
+      Size(previewSize.height, previewSize.width),
+      WebCameraFit.cover,
+    );
+    if (point == null) return;
+    try {
+      if (controller.value.focusPointSupported) await controller.setFocusPoint(point);
+    } catch (_) {}
+    try {
+      if (controller.value.exposurePointSupported) await controller.setExposurePoint(point);
     } catch (_) {}
   }
 
@@ -268,9 +467,7 @@ class F31CameraUiState extends State<F31CameraUi>
       _lightOffForReview();
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(const SnackBar(content: Text('Could not open the gallery.')));
+      _showSnack(context.tr('Could not open the gallery.'));
     } finally {
       if (mounted) setState(() => _isPicking = false);
     }
@@ -278,10 +475,9 @@ class F31CameraUiState extends State<F31CameraUi>
 
   Future<void> _captureAndSave() async {
     final controller = _controller;
-    if (controller == null ||
-        !controller.value.isInitialized ||
-        controller.value.isTakingPicture ||
-        _isCapturing) {
+    final webCamera = _webCamera;
+    if (_isCapturing || !_cameraReady) return;
+    if (kIsWeb ? webCamera == null : (controller == null || controller.value.isTakingPicture)) {
       return;
     }
     HapticFeedback.lightImpact();
@@ -300,12 +496,19 @@ class F31CameraUiState extends State<F31CameraUi>
     }
 
     try {
-      final XFile shot = await controller.takePicture();
+      // Browser: exactly the framing of the live view, as a JPEG of at most
+      // 2048 px (see web_camera.dart). Phone: the camera plugin's photo.
+      final XFile? shot = kIsWeb ? null : await controller!.takePicture();
+      final webPhoto = kIsWeb ? await webCamera!.capture() : null;
       final String trapDir = p.join(await documentsDirPath(), 'observations');
       await createLocalDir(trapDir);
       final String fileName = 'obs_${DateTime.now().millisecondsSinceEpoch}.jpg';
       final String savedPath = p.join(trapDir, fileName);
-      await copyLocalFile(shot.path, savedPath);
+      if (webPhoto != null) {
+        await writeLocalFile(savedPath, webPhoto);
+      } else {
+        await copyLocalFile(shot!.path, savedPath);
+      }
 
       if (!mounted) return;
       setState(() {
@@ -313,10 +516,9 @@ class F31CameraUiState extends State<F31CameraUi>
       });
       _lightOffForReview();
     } catch (e) {
+      debugPrint('Could not save the photo: $e');
       if (!mounted) return;
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(const SnackBar(content: Text('Could not save the photo. Please try again.')));
+      _showSnack(context.tr('Could not save the photo. Please try again.'));
     } finally {
       if (mounted) setState(() => _isCapturing = false);
     }
@@ -344,7 +546,13 @@ class F31CameraUiState extends State<F31CameraUi>
     final path = _capturedImagePath;
     if (path == null || _isNavigating) return;
     _isNavigating = true;
-    context.pop(path);
+    if (context.canPop()) {
+      context.pop(path);
+    } else {
+      // Opened directly (browser refresh / link to /observe/camera): nothing to
+      // return the photo to, so start the observation flow instead.
+      context.go(AppRouter.observe);
+    }
   }
 
   @override
@@ -451,6 +659,8 @@ class F31CameraUiState extends State<F31CameraUi>
   Widget _buildCapturedPhoto(String path) {
     return localImage(
       path,
+      // Web photos have the preview's exact framing, so "contain" shows the
+      // same picture the live view showed.
       fit: kIsWeb ? BoxFit.contain : BoxFit.cover,
       errorBuilder: (context, error, stackTrace) => const ColoredBox(color: Colors.black),
     );
@@ -468,14 +678,14 @@ class F31CameraUiState extends State<F31CameraUi>
             const Icon(Icons.no_photography_outlined, color: Colors.white70, size: 40),
             const SizedBox(height: AppSpacing.md),
             Text(
-              _errorMessage!,
+              context.tr(_errorMessage!, _errorVars),
               textAlign: TextAlign.center,
               style: const TextStyle(color: Colors.white70, fontSize: 14, height: 1.4),
             ),
-            if (cameras.isNotEmpty) ...[
+            if (_canRetry) ...[
               const SizedBox(height: AppSpacing.lg),
               AppPrimaryButton(
-                label: 'Try again',
+                label: context.tr('Try again'),
                 icon: Icons.refresh_rounded,
                 expanded: false,
                 compact: true,
@@ -486,6 +696,7 @@ class F31CameraUiState extends State<F31CameraUi>
         ),
       );
     }
+    if (kIsWeb) return _withTapToFocus(_buildWebPreview());
     final controller = _controller;
     if (controller == null || _initializeControllerFuture == null) {
       return const ColoredBox(
@@ -504,17 +715,59 @@ class F31CameraUiState extends State<F31CameraUi>
           );
         }
         final previewSize = controller.value.previewSize;
-        // Browser captures the raw video frame, so preserve its native aspect ratio.
-        return FittedBox(
-          fit: kIsWeb ? BoxFit.contain : BoxFit.cover,
-          child: SizedBox(
-            width: previewSize == null
-                ? 1
-                : (kIsWeb ? previewSize.width : previewSize.height),
-            height: previewSize == null
-                ? 1
-                : (kIsWeb ? previewSize.height : previewSize.width),
-            child: CameraPreview(controller),
+        return _withTapToFocus(
+          FittedBox(
+            fit: BoxFit.cover,
+            child: SizedBox(
+              width: previewSize == null ? 1 : previewSize.height,
+              height: previewSize == null ? 1 : previewSize.width,
+              child: CameraPreview(controller),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// Browser live view: the <video> itself, drawn by the browser at screen
+  /// resolution (cover, or contain when covering would cut too much).
+  Widget _buildWebPreview() {
+    final camera = _webCamera;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        const ColoredBox(color: Colors.black),
+        if (camera != null) camera.buildPreview(),
+        if (camera == null || !camera.isStarted)
+          const Center(child: CircularProgressIndicator(color: Colors.white)),
+      ],
+    );
+  }
+
+  /// Tap anywhere on the live view to focus there; shows the focus ring.
+  Widget _withTapToFocus(Widget preview) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final Size view = constraints.biggest;
+        final Offset? ring = _focusPoint;
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTapUp: (details) => _onPreviewTap(details.localPosition, view),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              preview,
+              if (ring != null)
+                Positioned(
+                  left: ring.dx - _FocusRing.size / 2,
+                  top: ring.dy - _FocusRing.size / 2,
+                  width: _FocusRing.size,
+                  height: _FocusRing.size,
+                  child: IgnorePointer(
+                    child: _FocusRing(key: ValueKey<int>(_focusTapId)),
+                  ),
+                ),
+            ],
           ),
         );
       },
@@ -535,32 +788,32 @@ class F31CameraUiState extends State<F31CameraUi>
             children: [
               _GlassIconButton(
                 icon: Icons.arrow_back_rounded,
-                tooltip: 'Back',
+                tooltip: context.tr('Back'),
                 onTap: () => popOrGoHome(context),
               ),
               const SizedBox(width: AppSpacing.md),
-              const Expanded(
+              Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      'Take a Photo',
+                      context.tr('Take a Photo'),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
+                      style: const TextStyle(
                         fontFamily: AppFonts.display,
                         color: Colors.white,
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
-                    SizedBox(height: 2),
+                    const SizedBox(height: 2),
                     Text(
-                      _stepLabel,
+                      context.tr(_stepLabel),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: Colors.white70, fontSize: 12.5),
+                      style: const TextStyle(color: Colors.white70, fontSize: 12.5),
                     ),
                   ],
                 ),
@@ -577,17 +830,21 @@ class F31CameraUiState extends State<F31CameraUi>
       builder: (context, constraints) {
         final double maxWidth = (constraints.maxWidth * 0.78).clamp(0.0, 280.0);
         final double maxHeight = (constraints.maxHeight * 0.9).clamp(0.0, 380.0);
-        final previewSize = _controller?.value.previewSize;
-        final double previewAspect = kIsWeb &&
-                previewSize != null &&
-                previewSize.width > 0 &&
-                previewSize.height > 0
-            ? previewSize.width / previewSize.height
-            : 3 / 4;
-        final double width = kIsWeb
+        // Browser with a letterboxed ("contain") live view: match the frame to
+        // the video's shape. Otherwise the video fills the screen.
+        final WebCameraController? camera = _webCamera;
+        final Size? videoSize = camera?.videoSize;
+        final bool letterboxed = kIsWeb &&
+            camera != null &&
+            camera.fit == WebCameraFit.contain &&
+            videoSize != null &&
+            videoSize.width > 0 &&
+            videoSize.height > 0;
+        final double previewAspect = letterboxed ? videoSize.width / videoSize.height : 3 / 4;
+        final double width = letterboxed
             ? (maxWidth < maxHeight * previewAspect ? maxWidth : maxHeight * previewAspect)
             : maxWidth;
-        final double height = kIsWeb ? width / previewAspect : maxHeight;
+        final double height = letterboxed ? width / previewAspect : maxHeight;
         return Center(
           child: SizedBox(
             width: width,
@@ -646,10 +903,10 @@ class F31CameraUiState extends State<F31CameraUi>
               borderRadius: BorderRadius.circular(AppRadius.pill),
               border: Border.all(color: Colors.white.withValues(alpha: 0.15)),
             ),
-            child: const Text(
-              'Fit the trap or plant inside the frame',
+            child: Text(
+              context.tr('Fit the trap or plant inside the frame'),
               textAlign: TextAlign.center,
-              style: TextStyle(
+              style: const TextStyle(
                 color: Colors.white,
                 fontSize: 13,
                 fontWeight: FontWeight.bold,
@@ -662,7 +919,7 @@ class F31CameraUiState extends State<F31CameraUi>
   }
 
   Widget _buildBottomControls() {
-    final bool ready = _errorMessage == null && (_controller?.value.isInitialized ?? false);
+    final bool ready = _cameraReady;
     return ClipRect(
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
@@ -677,7 +934,7 @@ class F31CameraUiState extends State<F31CameraUi>
               Expanded(
                 child: _SideControl(
                   icon: Icons.add_photo_alternate_rounded,
-                  label: 'Insert image',
+                  label: context.tr('Insert image'),
                   busy: _isPicking,
                   onTap: _isPicking || _isCapturing ? null : _pickFromGallery,
                 ),
@@ -690,7 +947,7 @@ class F31CameraUiState extends State<F31CameraUi>
               Expanded(
                 child: _SideControl(
                   icon: _flashIcon(_flashMode),
-                  label: 'Flash: ${_flashLabel(_flashMode)}',
+                  label: context.tr(_flashLabel(_flashMode)),
                   highlighted: _flashMode != FlashMode.off,
                   onTap: ready ? _cycleFlash : null,
                 ),
@@ -716,10 +973,10 @@ class F31CameraUiState extends State<F31CameraUi>
         children: [
           Row(
             children: [
-              const Expanded(
+              Expanded(
                 child: Text(
-                  'Photo captured',
-                  style: TextStyle(
+                  context.tr('Photo captured'),
+                  style: const TextStyle(
                     color: Colors.white,
                     fontSize: 15,
                     fontWeight: FontWeight.bold,
@@ -728,7 +985,7 @@ class F31CameraUiState extends State<F31CameraUi>
               ),
               _GlassIconButton(
                 icon: Icons.close,
-                tooltip: 'Discard photo',
+                tooltip: context.tr('Discard photo'),
                 onTap: _resetCapture,
               ),
             ],
@@ -738,7 +995,7 @@ class F31CameraUiState extends State<F31CameraUi>
             children: [
               Expanded(
                 child: AppSecondaryButton(
-                  label: 'Retake',
+                  label: context.tr('Retake'),
                   icon: Icons.refresh_rounded,
                   onPressed: _resetCapture,
                 ),
@@ -746,7 +1003,7 @@ class F31CameraUiState extends State<F31CameraUi>
               const SizedBox(width: AppSpacing.md),
               Expanded(
                 child: AppPrimaryButton(
-                  label: 'Use Photo',
+                  label: context.tr('Use Photo'),
                   icon: Icons.check_rounded,
                   onPressed: _isNavigating ? null : _confirmCapture,
                 ),
@@ -754,6 +1011,75 @@ class F31CameraUiState extends State<F31CameraUi>
             ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Focus ring shown where the live view was tapped: shrinks into place, then
+/// fades out. Static (no scaling) when animations are turned off.
+class _FocusRing extends StatefulWidget {
+  const _FocusRing({super.key});
+
+  static const double size = 72;
+
+  @override
+  State<_FocusRing> createState() => _FocusRingState();
+}
+
+class _FocusRingState extends State<_FocusRing> with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1200),
+  );
+  late final Animation<double> _scale = Tween<double>(begin: 1.35, end: 1.0).animate(
+    CurvedAnimation(parent: _controller, curve: const Interval(0, 0.3, curve: Curves.easeOutCubic)),
+  );
+  late final Animation<double> _opacity = Tween<double>(begin: 1.0, end: 0.0).animate(
+    CurvedAnimation(parent: _controller, curve: const Interval(0.7, 1, curve: Curves.easeIn)),
+  );
+  bool _started = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_started) return;
+    _started = true;
+    if (MediaQuery.maybeDisableAnimationsOf(context) ?? false) {
+      _controller.value = 0.5; // full size, fully visible
+    } else {
+      _controller.forward();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _opacity,
+      child: ScaleTransition(
+        scale: _scale,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(color: AppColors.brandGold, width: 2),
+            boxShadow: [
+              BoxShadow(color: Colors.black.withValues(alpha: 0.35), blurRadius: 6),
+            ],
+          ),
+          child: Center(
+            child: Container(
+              width: 6,
+              height: 6,
+              decoration: const BoxDecoration(color: AppColors.brandGold, shape: BoxShape.circle),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -854,7 +1180,7 @@ class _ShutterButtonState extends State<_ShutterButton> {
     return Semantics(
       button: true,
       enabled: enabled,
-      label: 'Take photo',
+      label: context.tr('Take photo'),
       child: GestureDetector(
         onTapDown: enabled ? (_) => _setPressed(true) : null,
         onTapUp: enabled ? (_) => _setPressed(false) : null,

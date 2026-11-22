@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useT } from '../i18n/index.jsx';
 import Icon from './icons.jsx';
 
 const countLabel = (n) => (n > 99 ? '99+' : String(n));
@@ -9,6 +10,7 @@ const countLabel = (n) => (n > 99 ? '99+' : String(n));
  * `items`: [{ id, icon, tone, text, page }] (page = where "Open" goes).
  */
 export default function NotificationBell({ fresh, items, onOpenPage, onMarkSeen }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   const waiting = items.filter((i) => i.count > 0);
@@ -36,7 +38,7 @@ export default function NotificationBell({ fresh, items, onOpenPage, onMarkSeen 
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        aria-label={fresh ? `${fresh} new submission${fresh === 1 ? '' : 's'}` : 'Notifications'}
+        aria-label={fresh ? t(fresh === 1 ? '{n} new submission' : '{n} new submissions', { n: fresh }) : t('Notifications')}
         aria-expanded={open}
         className="relative rounded-full p-2 text-ink2 transition hover:bg-canvas hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
       >
@@ -52,10 +54,10 @@ export default function NotificationBell({ fresh, items, onOpenPage, onMarkSeen 
       {open && (
         <div className="absolute right-0 top-12 z-[1700] w-[330px] max-w-[calc(100vw-2rem)] animate-fade-in overflow-hidden rounded-2xl border border-line bg-white shadow-2xl">
           <div className="flex items-center justify-between border-b border-line px-4 py-3">
-            <span className="text-sm font-bold text-ink">Notifications</span>
+            <span className="text-sm font-bold text-ink">{t('Notifications')}</span>
             {fresh > 0 && (
               <button type="button" onClick={onMarkSeen} className="text-xs font-semibold text-brand-700 hover:underline">
-                Mark as seen
+                {t('Mark as seen')}
               </button>
             )}
           </div>
@@ -65,9 +67,9 @@ export default function NotificationBell({ fresh, items, onOpenPage, onMarkSeen 
                 <span className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full bg-red-600" />
                 <div className="min-w-0 flex-1">
                   <div className="text-sm font-semibold text-ink">
-                    {countLabel(fresh)} new submission{fresh === 1 ? '' : 's'}
+                    {t(fresh === 1 ? '{n} new submission' : '{n} new submissions', { n: countLabel(fresh) })}
                   </div>
-                  <div className="text-xs text-ink2">Sent from the field since you last checked.</div>
+                  <div className="text-xs text-ink2">{t('Sent from the field since you last checked.')}</div>
                 </div>
               </li>
             )}
@@ -80,7 +82,7 @@ export default function NotificationBell({ fresh, items, onOpenPage, onMarkSeen 
                 </button>
               </li>
             ))}
-            {!fresh && !waiting.length && <li className="px-4 py-8 text-center text-sm text-ink2">You're all caught up.</li>}
+            {!fresh && !waiting.length && <li className="px-4 py-8 text-center text-sm text-ink2">{t("You're all caught up.")}</li>}
           </ul>
         </div>
       )}
@@ -90,6 +92,7 @@ export default function NotificationBell({ fresh, items, onOpenPage, onMarkSeen 
 
 /** Small message in the corner when a new submission arrives while the dashboard is open. */
 export function Toast({ toast, onClose, onAction }) {
+  const t = useT();
   useEffect(() => {
     if (!toast) return undefined;
     const t = setTimeout(onClose, 8000);
@@ -108,11 +111,11 @@ export function Toast({ toast, onClose, onAction }) {
           <div className="text-xs text-ink2">{toast.text}</div>
           {toast.page && (
             <button type="button" onClick={onAction} className="mt-2 text-xs font-bold text-brand-700 hover:underline">
-              {toast.action || 'Open'}
+              {toast.action || t('Open')}
             </button>
           )}
         </div>
-        <button type="button" onClick={onClose} aria-label="Dismiss" className="rounded-lg p-1 text-muted hover:bg-canvas hover:text-ink">
+        <button type="button" onClick={onClose} aria-label={t('Dismiss')} className="rounded-lg p-1 text-muted hover:bg-canvas hover:text-ink">
           <Icon name="x" className="h-4 w-4" />
         </button>
       </div>

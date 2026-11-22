@@ -3,10 +3,15 @@ import 'package:flutter/services.dart';
 import 'package:flutter/widget_previews.dart';
 import 'package:go_router/go_router.dart';
 import '../app_router.dart';
+import '../l10n/app_language.dart';
+import '../services/antique_geofence.dart';
 import '../services/auth_service.dart';
 import '../theme.dart';
 import '../widgets/app_widgets.dart';
+import '../widgets/barangay_field.dart';
 import '../widgets/brand.dart';
+import '../widgets/gps_area.dart';
+import '../widgets/language_button.dart';
 import '../widgets/motion.dart';
 import '../utils/places.dart';
 
@@ -44,6 +49,16 @@ class F11aRegistrationState extends State<F11aRegistration> {
 
 	final List<String> _antiqueMunicipalities = kAntiqueMunicipalities;
 
+	// Area from GPS (offline lookup in the Antique barangay map). Found
+	// automatically once when both fields are still empty; "Use my location"
+	// asks again. Typed or picked values are never replaced automatically.
+	GpsAreaResult? _gpsArea;
+	bool _gpsBusy = false;
+	bool _gpsApplied = false;
+	bool _autoDetected = false;
+	String? _barangayPsgc;
+	String _locationSource = 'manual';
+
 	@override
 	void initState() {
 		super.initState();
@@ -70,6 +85,39 @@ class F11aRegistrationState extends State<F11aRegistration> {
 			_selectedRole = role;
 			_currentStep = 1;
 		});
+		// Fill the municipality and barangay from GPS, but only when both are empty.
+		if (!_autoDetected && _selectedRegion == null && _barangayController.text.trim().isEmpty) {
+			_autoDetected = true;
+			WidgetsBinding.instance.addPostFrameCallback((_) => _detectArea(auto: true));
+		}
+	}
+
+	/// [auto]: found on its own, so it only fills empty fields. Otherwise the
+	/// person tapped "Use my location" and the result replaces what is there.
+	Future<void> _detectArea({required bool auto}) async {
+		if (_gpsBusy) return;
+		setState(() {
+			_gpsBusy = true;
+			_gpsApplied = false;
+		});
+		final result = await findAreaFromGps(ask: true);
+		if (!mounted) return;
+		setState(() {
+			_gpsBusy = false;
+			_gpsArea = result;
+		});
+		final empty = _selectedRegion == null && _barangayController.text.trim().isEmpty;
+		if (result.usable && (!auto || empty)) _applyPlace(result.place!);
+	}
+
+	void _applyPlace(GeoPlace place) {
+		setState(() {
+			_selectedRegion = _antiqueMunicipalities.contains(place.municipality) ? place.municipality : _selectedRegion;
+			_barangayController.text = place.barangay;
+			_barangayPsgc = place.psgc;
+			_locationSource = 'gps';
+			_gpsApplied = true;
+		});
 	}
 
 	void _backToRoles() => setState(() => _currentStep = 0);
@@ -80,12 +128,12 @@ class F11aRegistrationState extends State<F11aRegistration> {
 		if (!(_formKey.currentState?.validate() ?? false)) return;
 
 		if (_selectedRegion == null) {
-			_showMessage('Please select your municipality.');
+			_showMessage(context.tr('Please select your municipality.'));
 			return;
 		}
 
 		if (!_agreedToTerms) {
-			_showMessage('Please agree to the Terms & Privacy Policy.');
+			_showMessage(context.tr('Please agree to the Terms & Privacy Policy.'));
 			return;
 		}
 
@@ -96,6 +144,17 @@ class F11aRegistrationState extends State<F11aRegistration> {
 		setState(() => _isSubmitting = true);
 
 		try {
+			// A typed name that matches an official barangay gets its official
+			// spelling and PSGC code (works offline).
+			var barangay = _barangayController.text.trim();
+			var psgc = _barangayPsgc;
+			final official = await AntiqueGeofence.instance.match(_selectedRegion!, barangay).catchError((_) => null);
+			if (official != null) {
+				barangay = official.barangay;
+				psgc = official.psgc;
+			} else if (psgc != null) {
+				psgc = null; // the picked code no longer matches what is in the field
+			}
 			final result = await AuthService.instance.register(
 				fullName: fullName,
 				email: email,
@@ -103,7 +162,9 @@ class F11aRegistrationState extends State<F11aRegistration> {
 				phone: _phoneController.text.trim(),
 				municipality: _selectedRegion!,
 				role: _selectedRole,
-				barangay: _barangayController.text.trim(),
+				barangay: barangay,
+				barangayPsgc: psgc,
+				locationSource: psgc != null && _locationSource == 'gps' ? 'gps' : 'manual',
 			);
 
 			if (!mounted) return;
@@ -111,7 +172,7 @@ class F11aRegistrationState extends State<F11aRegistration> {
 			final registeredEmail = (result['email'] ?? email).toString().trim();
 
 			HapticFeedback.lightImpact();
-			_showMessage('Verification code sent to $registeredEmail.');
+			_showMessage(context.tr('Verification code sent to {email}.', {'email': registeredEmail}));
 			context.push(
 				AppRouter.otp,
 				extra: <String, dynamic>{
@@ -123,7 +184,7 @@ class F11aRegistrationState extends State<F11aRegistration> {
 			);
 		} catch (e) {
 			if (!mounted) return;
-			_showMessage(_cleanError(e));
+			_showMessage(context.tr(_cleanError(e)));
 		} finally {
 			if (mounted) setState(() => _isSubmitting = false);
 		}
@@ -188,19 +249,20 @@ class F11aRegistrationState extends State<F11aRegistration> {
 		return Column(
 			crossAxisAlignment: CrossAxisAlignment.stretch,
 			children: [
-				const SizedBox(height: 40),
+				const SizedBox(height: AppSpacing.md),
+				const Align(alignment: Alignment.centerRight, child: LanguageButton()),
 				...staggered([
 					const Center(child: BrandMark(size: 104)),
 					const Padding(
 						padding: EdgeInsets.only(top: AppSpacing.md),
 						child: Center(child: BrandWordmark(fontSize: 26, color: AppColors.primaryDark)),
 					),
-					const Padding(
-						padding: EdgeInsets.only(top: AppSpacing.xl),
+					Padding(
+						padding: const EdgeInsets.only(top: AppSpacing.xl),
 						child: Text(
-							'Select Your Role',
+							context.tr('Select Your Role'),
 							textAlign: TextAlign.center,
-							style: TextStyle(
+							style: const TextStyle(
 								fontFamily: AppFonts.display,
 								color: AppColors.textPrimary,
 								fontSize: 24,
@@ -208,17 +270,17 @@ class F11aRegistrationState extends State<F11aRegistration> {
 							),
 						),
 					),
-					const Padding(
-						padding: EdgeInsets.only(top: AppSpacing.xs, bottom: AppSpacing.xl),
+					Padding(
+						padding: const EdgeInsets.only(top: AppSpacing.xs, bottom: AppSpacing.xl),
 						child: Text(
-							'Choose how you will use the app.',
+							context.tr('Choose how you will use the app.'),
 							textAlign: TextAlign.center,
-							style: TextStyle(color: AppColors.textSecondary, fontSize: 14),
+							style: const TextStyle(color: AppColors.textSecondary, fontSize: 14),
 						),
 					),
 					_buildRoleOptionButton(
-						label: "I'm a Farmer",
-						description: 'Report pests and diseases, get treatment options and reminders.',
+						label: context.tr("I'm a Farmer"),
+						description: context.tr('Report pests and diseases, get treatment options and reminders.'),
 						icon: Icons.agriculture_rounded,
 						isFilled: _selectedRole == 'farmer',
 						onTap: () => _selectRole('farmer'),
@@ -226,19 +288,19 @@ class F11aRegistrationState extends State<F11aRegistration> {
 					Padding(
 						padding: const EdgeInsets.only(top: AppSpacing.md),
 						child: _buildRoleOptionButton(
-							label: 'Agricultural Technician',
-							description: 'Everything farmers have, plus validation, infestation levels, escalation and the local map.',
+							label: context.tr('Agricultural Technician'),
+							description: context.tr('Everything farmers have, plus validation, infestation levels, escalation and the local map.'),
 							icon: Icons.engineering_rounded,
 							isFilled: _selectedRole == 'technician',
 							onTap: () => _selectRole('technician'),
 						),
 					),
-					const Padding(
-						padding: EdgeInsets.only(top: AppSpacing.lg),
+					Padding(
+						padding: const EdgeInsets.only(top: AppSpacing.lg),
 						child: Text(
-							'Agriculturists and OPA staff use the Palay Patrol web dashboard.',
+							context.tr('Agriculturists and OPA staff use the Palay Patrol web dashboard.'),
 							textAlign: TextAlign.center,
-							style: TextStyle(color: AppColors.textMuted, fontSize: 12.5),
+							style: const TextStyle(color: AppColors.textMuted, fontSize: 12.5),
 						),
 					),
 					Padding(
@@ -333,13 +395,16 @@ class F11aRegistrationState extends State<F11aRegistration> {
 			children: [
 				const SizedBox(height: AppSpacing.md),
 				...staggered([
-					Align(
-						alignment: Alignment.centerLeft,
-						child: AppCircleButton(
-							icon: Icons.arrow_back_rounded,
-							tooltip: 'Back to role selection',
-							onTap: _backToRoles,
-						),
+					Row(
+						children: [
+							AppCircleButton(
+								icon: Icons.arrow_back_rounded,
+								tooltip: context.tr('Back to role selection'),
+								onTap: _backToRoles,
+							),
+							const Spacer(),
+							const LanguageButton(),
+						],
 					),
 					Column(
 						crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -347,9 +412,9 @@ class F11aRegistrationState extends State<F11aRegistration> {
 							const SizedBox(height: AppSpacing.md),
 							const Center(child: BrandMark(size: 80)),
 							const SizedBox(height: AppSpacing.lg),
-							const Text(
-								'Create your account',
-								style: TextStyle(
+							Text(
+								context.tr('Create your account'),
+								style: const TextStyle(
 									fontFamily: AppFonts.display,
 									color: AppColors.textPrimary,
 									fontSize: 26,
@@ -358,23 +423,26 @@ class F11aRegistrationState extends State<F11aRegistration> {
 							),
 							const SizedBox(height: AppSpacing.xs),
 							Text(
-								'Registering as ${_roleLabel(_selectedRole)}. Your municipal agriculture office '
-								'will check your details and confirm your role before your account can be used.',
+								context.tr(
+									_selectedRole == 'technician'
+										? 'Registering as an Agricultural Technician. Your municipal agriculture office will check your details and confirm your role before your account can be used.'
+										: 'Registering as a Farmer. Your municipal agriculture office will check your details and confirm your role before your account can be used.',
+								),
 								style: const TextStyle(color: AppColors.textSecondary, fontSize: 14, height: 1.4),
 							),
 							const SizedBox(height: AppSpacing.xl),
 						],
 					),
 					_buildLabeledInput(
-						label: 'Full name',
-						hintText: 'e.g. Juan A. Dela Cruz',
+						label: context.tr('Full name'),
+						hintText: context.tr('e.g. Juan A. Dela Cruz'),
 						controller: _fullNameController,
 						keyboardType: TextInputType.name,
 						textCapitalization: TextCapitalization.words,
 						autofillHints: const [AutofillHints.name],
 						validator: (value) {
 							if (value == null || value.trim().length < 2) {
-								return 'Enter your full name.';
+								return context.tr('Enter your full name.');
 							}
 							return null;
 						},
@@ -382,15 +450,15 @@ class F11aRegistrationState extends State<F11aRegistration> {
 					Padding(
 						padding: const EdgeInsets.only(top: AppSpacing.lg),
 						child: _buildLabeledInput(
-							label: 'Email',
-							hintText: 'e.g. juan.delacruz@gmail.com',
+							label: context.tr('Email'),
+							hintText: context.tr('e.g. juan.delacruz@gmail.com'),
 							controller: _emailController,
 							keyboardType: TextInputType.emailAddress,
 							autofillHints: const [AutofillHints.email],
 							validator: (value) {
 								final email = value?.trim() ?? '';
 								if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(email)) {
-									return 'Enter a valid email address.';
+									return context.tr('Enter a valid email address.');
 								}
 								return null;
 							},
@@ -399,15 +467,15 @@ class F11aRegistrationState extends State<F11aRegistration> {
 					Padding(
 						padding: const EdgeInsets.only(top: AppSpacing.lg),
 						child: _buildLabeledInput(
-							label: 'Mobile number',
-							hintText: 'e.g. 0917 123 4567',
+							label: context.tr('Mobile number'),
+							hintText: context.tr('e.g. 0917 123 4567'),
 							controller: _phoneController,
 							keyboardType: TextInputType.phone,
 							autofillHints: const [AutofillHints.telephoneNumber],
 							validator: (value) {
 								final v = (value ?? '').trim();
 								if (!RegExp(r'^\+?[0-9][0-9 \-]{5,28}$').hasMatch(v)) {
-									return 'Enter a valid mobile number.';
+									return context.tr('Enter a valid mobile number.');
 								}
 								return null;
 							},
@@ -416,14 +484,14 @@ class F11aRegistrationState extends State<F11aRegistration> {
 					Padding(
 						padding: const EdgeInsets.only(top: AppSpacing.lg),
 						child: _buildLabeledPasswordInput(
-							label: 'Password',
-							hintText: 'At least 8 characters',
+							label: context.tr('Password'),
+							hintText: context.tr('At least 8 characters'),
 							controller: _passwordController,
 							obscureText: _obscurePassword,
 							textInputAction: TextInputAction.next,
 							onToggle: () => setState(() => _obscurePassword = !_obscurePassword),
 							validator: (value) {
-								if ((value ?? '').length < 8) return 'Password must be at least 8 characters.';
+								if ((value ?? '').length < 8) return context.tr('Password must be at least 8 characters.');
 								return null;
 							},
 						),
@@ -431,14 +499,14 @@ class F11aRegistrationState extends State<F11aRegistration> {
 					Padding(
 						padding: const EdgeInsets.only(top: AppSpacing.lg),
 						child: _buildLabeledPasswordInput(
-							label: 'Confirm password',
-							hintText: 'Re-enter your password',
+							label: context.tr('Confirm password'),
+							hintText: context.tr('Re-enter your password'),
 							controller: _confirmPasswordController,
 							obscureText: _obscureConfirmPassword,
 							textInputAction: TextInputAction.done,
 							onToggle: () => setState(() => _obscureConfirmPassword = !_obscureConfirmPassword),
 							validator: (value) {
-								if (value != _passwordController.text) return 'Passwords do not match.';
+								if (value != _passwordController.text) return context.tr('Passwords do not match.');
 								return null;
 							},
 						),
@@ -449,16 +517,42 @@ class F11aRegistrationState extends State<F11aRegistration> {
 					),
 					Padding(
 						padding: const EdgeInsets.only(top: AppSpacing.lg),
-						child: _buildLabeledInput(
-							label: 'Barangay',
-							hintText: 'e.g. Poblacion',
-							controller: _barangayController,
-							keyboardType: TextInputType.text,
-							textCapitalization: TextCapitalization.words,
-							validator: (value) {
-								if ((value ?? '').trim().isEmpty) return 'Enter your barangay.';
-								return null;
-							},
+						child: Column(
+							crossAxisAlignment: CrossAxisAlignment.start,
+							children: [
+								_buildFieldLabel(context.tr('Barangay')),
+								BarangayField(
+									controller: _barangayController,
+									municipality: _selectedRegion ?? '',
+									style: const TextStyle(color: AppColors.textPrimary, fontSize: 14),
+									decoration: InputDecoration(hintText: context.tr('e.g. Poblacion')),
+									onPlace: (place) => setState(() {
+										_barangayPsgc = place?.psgc;
+										_locationSource = 'manual';
+										_gpsApplied = false;
+									}),
+									validator: (value) {
+										if ((value ?? '').trim().isEmpty) return context.tr('Enter your barangay.');
+										return null;
+									},
+								),
+								GpsAreaNote(
+									busy: _gpsBusy,
+									result: _gpsArea,
+									applied: _gpsApplied,
+									onRetry: () => _detectArea(auto: false),
+									onUseAnyway: _gpsArea?.place == null ? null : () => _applyPlace(_gpsArea!.place!),
+								),
+								Align(
+									alignment: Alignment.centerLeft,
+									child: TextButton.icon(
+										key: const ValueKey('use-my-location'),
+										onPressed: _gpsBusy ? null : () => _detectArea(auto: false),
+										icon: const Icon(Icons.my_location_rounded, size: 18),
+										label: Text(context.tr('Use my location')),
+									),
+								),
+							],
 						),
 					),
 					Padding(
@@ -468,7 +562,7 @@ class F11aRegistrationState extends State<F11aRegistration> {
 					Padding(
 						padding: const EdgeInsets.only(top: AppSpacing.xl),
 						child: AppPrimaryButton(
-							label: 'Continue',
+							label: context.tr('Continue'),
 							loading: _isSubmitting,
 							onPressed: _register,
 						),
@@ -481,15 +575,6 @@ class F11aRegistrationState extends State<F11aRegistration> {
 				const SizedBox(height: AppSpacing.xl),
 			],
 		);
-	}
-
-	String _roleLabel(String role) {
-		switch (role) {
-			case 'technician':
-				return 'an Agricultural Technician';
-			default:
-				return 'a Farmer';
-		}
 	}
 
 	Widget _buildFieldLabel(String label) {
@@ -559,7 +644,7 @@ class F11aRegistrationState extends State<F11aRegistration> {
 					decoration: InputDecoration(
 						hintText: hintText,
 						suffixIcon: IconButton(
-							tooltip: obscureText ? 'Show password' : 'Hide password',
+							tooltip: context.tr(obscureText ? 'Show password' : 'Hide password'),
 							icon: AppSwitcher(
 								duration: AppMotion.fast,
 								alignment: Alignment.center,
@@ -582,16 +667,18 @@ class F11aRegistrationState extends State<F11aRegistration> {
 		return Column(
 			crossAxisAlignment: CrossAxisAlignment.start,
 			children: [
-				_buildFieldLabel('Municipality'),
+				_buildFieldLabel(context.tr('Municipality')),
 				DropdownButtonFormField<String>(
+					// Rebuilt when GPS fills the municipality in.
+					key: ValueKey('region:$_selectedRegion'),
 					initialValue: _selectedRegion,
 					isExpanded: true,
 					icon: const Icon(Icons.keyboard_arrow_down_rounded, color: AppColors.primary),
 					dropdownColor: AppColors.surface,
 					borderRadius: BorderRadius.circular(AppRadius.sm),
-					hint: const Text(
-						'Select your municipality',
-						style: TextStyle(color: AppColors.textMuted, fontSize: 14),
+					hint: Text(
+						context.tr('Select your municipality'),
+						style: const TextStyle(color: AppColors.textMuted, fontSize: 14),
 					),
 					items: _antiqueMunicipalities.map((muni) {
 						return DropdownMenuItem<String>(
@@ -599,8 +686,16 @@ class F11aRegistrationState extends State<F11aRegistration> {
 							child: Text(muni, style: const TextStyle(color: AppColors.textPrimary, fontSize: 14)),
 						);
 					}).toList(),
-					validator: (val) => val == null ? 'Select your municipality.' : null,
-					onChanged: (val) => setState(() => _selectedRegion = val),
+					validator: (val) => val == null ? context.tr('Select your municipality.') : null,
+					onChanged: (val) => setState(() {
+						if (val != _selectedRegion) {
+							// A barangay code from another municipality no longer applies.
+							_barangayPsgc = null;
+							_locationSource = 'manual';
+							_gpsApplied = false;
+						}
+						_selectedRegion = val;
+					}),
 				),
 			],
 		);
@@ -623,10 +718,10 @@ class F11aRegistrationState extends State<F11aRegistration> {
 							onChanged: (v) => setState(() => _agreedToTerms = v ?? false),
 						),
 						const SizedBox(width: AppSpacing.xs),
-						const Expanded(
+						Expanded(
 							child: Text(
-								'I agree to the Terms & Privacy Policy',
-								style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+								context.tr('I agree to the Terms & Privacy Policy'),
+								style: const TextStyle(color: AppColors.textSecondary, fontSize: 13),
 							),
 						),
 					],
@@ -640,12 +735,12 @@ class F11aRegistrationState extends State<F11aRegistration> {
 			alignment: WrapAlignment.center,
 			crossAxisAlignment: WrapCrossAlignment.center,
 			children: [
-				const Text('Already have an account?', style: TextStyle(color: AppColors.textSecondary, fontSize: 14)),
+				Text(context.tr('Already have an account?'), style: const TextStyle(color: AppColors.textSecondary, fontSize: 14)),
 				TextButton(
 					onPressed: () => context.go(AppRouter.login),
-					child: const Text(
-						'Log In',
-						style: TextStyle(
+					child: Text(
+						context.tr('Log In'),
+						style: const TextStyle(
 							fontSize: 14,
 							fontWeight: FontWeight.bold,
 							decoration: TextDecoration.underline,

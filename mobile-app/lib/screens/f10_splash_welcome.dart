@@ -5,8 +5,10 @@ import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../app_router.dart';
 import '../controllers/auth_controller.dart';
+import '../l10n/app_language.dart';
 import '../theme.dart';
 import '../widgets/brand.dart';
+import '../widgets/language_button.dart';
 import '../widgets/motion.dart';
 import 'f01_onboarding.dart' show kSeenOnboardingKey;
 
@@ -142,62 +144,73 @@ class F10SplashWelcomeState extends State<F10SplashWelcome>
 			child: Scaffold(
 				backgroundColor: AppColors.brandGreen,
 				body: SafeArea(
-					child: LayoutBuilder(
-						builder: (context, constraints) => SingleChildScrollView(
-							child: ConstrainedBox(
-								constraints: BoxConstraints(minHeight: constraints.maxHeight),
-								child: IntrinsicHeight(
-									child: Column(
-										children: [
-											Expanded(
-												child: Padding(
-													padding: const EdgeInsets.symmetric(horizontal: AppSpacing.hPad),
-													child: Column(
-														mainAxisAlignment: MainAxisAlignment.center,
-														children: [
-															const Spacer(flex: 2),
-															const SizedBox(height: AppSpacing.xl),
-															FadeTransition(
-																opacity: _logoFade,
-																child: ScaleTransition(
-																	scale: _logoScale,
-																	child: PalayPatrolLogo(width: logoWidth),
-																),
-															),
-															const SizedBox(height: AppSpacing.xl),
-															_rise(_titleIn, const BrandTitle(fontSize: 38)),
-															const SizedBox(height: AppSpacing.md),
-															_rise(
-																_subtitleIn,
-																ConstrainedBox(
-																	constraints: const BoxConstraints(maxWidth: 340),
-																	child: const Text(
-																		kAppTagline,
-																		style: TextStyle(
-																			color: AppColors.brandTagline,
-																			fontSize: 15.5,
-																			fontWeight: FontWeight.w700,
-																			height: 1.4,
+					child: Stack(
+						fit: StackFit.passthrough,
+						children: [
+							LayoutBuilder(
+								builder: (context, constraints) => SingleChildScrollView(
+									child: ConstrainedBox(
+										constraints: BoxConstraints(minHeight: constraints.maxHeight),
+										child: IntrinsicHeight(
+											child: Column(
+												children: [
+													Expanded(
+														child: Padding(
+															padding: const EdgeInsets.symmetric(horizontal: AppSpacing.hPad),
+															child: Column(
+																mainAxisAlignment: MainAxisAlignment.center,
+																children: [
+																	const Spacer(flex: 2),
+																	const SizedBox(height: AppSpacing.xl),
+																	FadeTransition(
+																		opacity: _logoFade,
+																		child: ScaleTransition(
+																			scale: _logoScale,
+																			child: PalayPatrolLogo(width: logoWidth),
 																		),
-																		textAlign: TextAlign.center,
 																	),
-																),
+																	const SizedBox(height: AppSpacing.xl),
+																	_rise(_titleIn, const BrandTitle(fontSize: 38)),
+																	const SizedBox(height: AppSpacing.md),
+																	_rise(
+																		_subtitleIn,
+																		ConstrainedBox(
+																			constraints: const BoxConstraints(maxWidth: 340),
+																			child: Text(
+																				context.tr(kAppTagline),
+																				style: const TextStyle(
+																					color: AppColors.brandTagline,
+																					fontSize: 15.5,
+																					fontWeight: FontWeight.w700,
+																					height: 1.4,
+																				),
+																				textAlign: TextAlign.center,
+																			),
+																		),
+																	),
+																	const SizedBox(height: AppSpacing.xl),
+																	const Spacer(flex: 3),
+																],
 															),
-															const SizedBox(height: AppSpacing.xl),
-															const Spacer(flex: 3),
-														],
+														),
 													),
-												),
+													Padding(
+														padding: const EdgeInsets.fromLTRB(AppSpacing.hPad, 0, AppSpacing.hPad, AppSpacing.xl),
+														child: _buildActions(),
+													),
+												],
 											),
-											Padding(
-												padding: const EdgeInsets.fromLTRB(AppSpacing.hPad, 0, AppSpacing.hPad, AppSpacing.xl),
-												child: _buildActions(),
-											),
-										],
+										),
 									),
 								),
 							),
-						),
+							// Language picker, so people can switch before signing in.
+							const Positioned(
+								top: AppSpacing.sm,
+								right: AppSpacing.md,
+								child: LanguageButton(dark: true),
+							),
+						],
 					),
 				),
 			),
@@ -210,7 +223,7 @@ class F10SplashWelcomeState extends State<F10SplashWelcome>
 				_rise(
 					_primaryIn,
 					_ActionButton(
-						label: _seenOnboarding ? "Log In" : "Get Started",
+						label: _seenOnboarding ? context.tr("Log In") : context.tr("Get Started"),
 						backgroundColor: AppColors.brandGold,
 						textColor: AppColors.brandGreen,
 						elevated: true,
@@ -223,7 +236,7 @@ class F10SplashWelcomeState extends State<F10SplashWelcome>
 					Column(
 						children: [
 							_ActionButton(
-								label: "Create Account",
+								label: context.tr("Create Account"),
 								backgroundColor: AppColors.brandLime.withValues(alpha: 0.08),
 								textColor: AppColors.brandTagline,
 								borderColor: AppColors.brandLime.withValues(alpha: 0.55),
@@ -253,9 +266,9 @@ class F10SplashWelcomeState extends State<F10SplashWelcome>
 									foregroundColor: AppColors.brandTagline,
 									minimumSize: const Size(64, 44),
 								),
-								child: const Text(
-									'I already have an account',
-									style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+								child: Text(
+									context.tr('I already have an account'),
+									style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
 								),
 							),
 						),

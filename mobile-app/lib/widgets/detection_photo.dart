@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/app_language.dart';
 import '../models/record.dart';
 import '../platform/local_files.dart';
 import '../services/api_client.dart';
@@ -80,12 +81,12 @@ class _DetectionPhotoState extends State<DetectionPhoto> {
 
   void _openFull() {
     Navigator.of(context).push(MaterialPageRoute<void>(
-      builder: (_) => Scaffold(
+      builder: (ctx) => Scaffold(
         backgroundColor: Colors.black,
         appBar: AppBar(
           backgroundColor: Colors.black,
           foregroundColor: Colors.white,
-          title: Text('${widget.boxes.length} boxes', style: const TextStyle(fontSize: 16)),
+          title: Text(ctx.tr('{n} boxes', {'n': widget.boxes.length}), style: const TextStyle(fontSize: 16)),
         ),
         body: InteractiveViewer(
           maxScale: 6,
@@ -106,11 +107,13 @@ class _DetectionPhotoState extends State<DetectionPhoto> {
   @override
   Widget build(BuildContext context) {
     if (_failed) {
-      return const AspectRatio(
+      return AspectRatio(
         aspectRatio: 4 / 3,
         child: ColoredBox(
           color: AppColors.accentLight,
-          child: Center(child: Text('Photo unavailable', style: TextStyle(color: AppColors.textSecondary))),
+          child: Center(
+            child: Text(context.tr('Photo unavailable'), style: const TextStyle(color: AppColors.textSecondary)),
+          ),
         ),
       );
     }

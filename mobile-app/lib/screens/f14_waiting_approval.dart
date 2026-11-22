@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../controllers/auth_controller.dart';
+import '../l10n/app_language.dart';
 import '../services/api_client.dart';
 import '../theme.dart';
 import '../widgets/app_widgets.dart';
@@ -95,7 +96,7 @@ class _F14WaitingApprovalState extends State<F14WaitingApproval> with WidgetsBin
                   ),
                   const SizedBox(height: AppSpacing.lg),
                   Text(
-                    rejected ? 'Your account was not approved' : 'Waiting for approval',
+                    rejected ? context.tr('Your account was not approved') : context.tr('Waiting for approval'),
                     textAlign: TextAlign.center,
                     style: const TextStyle(
                       fontFamily: AppFonts.display,
@@ -107,10 +108,12 @@ class _F14WaitingApprovalState extends State<F14WaitingApproval> with WidgetsBin
                   const SizedBox(height: AppSpacing.sm),
                   Text(
                     rejected
-                        ? 'Please visit or call your Municipal Agriculture Office if you think this is a mistake.'
-                        : 'Your email is verified. An agriculturist from your municipal agriculture '
+                        ? context.tr('Please visit or call your Municipal Agriculture Office if you think this is a mistake.')
+                        : context.tr(
+                            'Your email is verified. An agriculturist from your municipal agriculture '
                             'office will check and approve your account. You can close the app; '
                             'we\'ll let you in as soon as it\'s approved.',
+                          ),
                     textAlign: TextAlign.center,
                     style: const TextStyle(color: AppColors.textSecondary, fontSize: 15, height: 1.5),
                   ),
@@ -125,9 +128,9 @@ class _F14WaitingApprovalState extends State<F14WaitingApproval> with WidgetsBin
                   children: [
                     _row(Icons.person_outline_rounded, s.name),
                     _row(Icons.badge_outlined, switch (s.role) {
-                      AppRole.technician => 'Requested role: Agricultural technician',
-                      AppRole.agriculturist => 'Requested role: Agriculturist',
-                      AppRole.farmer => 'Requested role: Farmer',
+                      AppRole.technician => context.tr('Requested role: Agricultural technician'),
+                      AppRole.agriculturist => context.tr('Requested role: Agriculturist'),
+                      AppRole.farmer => context.tr('Requested role: Farmer'),
                     }),
                     _row(Icons.mail_outline_rounded, s.email),
                     if (s.phone.isNotEmpty) _row(Icons.phone_outlined, s.phone),
@@ -139,17 +142,17 @@ class _F14WaitingApprovalState extends State<F14WaitingApproval> with WidgetsBin
             const SizedBox(height: AppSpacing.xl),
             if (!rejected)
               AppPrimaryButton(
-                label: 'Check again',
+                label: context.tr('Check again'),
                 icon: Icons.refresh_rounded,
                 loading: _checking,
                 onPressed: () => _check(),
               ),
             if (_message != null) ...[
               const SizedBox(height: AppSpacing.md),
-              Text(_message!, textAlign: TextAlign.center, style: const TextStyle(color: AppColors.textSecondary)),
+              Text(context.tr(_message!), textAlign: TextAlign.center, style: const TextStyle(color: AppColors.textSecondary)),
             ],
             const SizedBox(height: AppSpacing.md),
-            AppSecondaryButton(label: 'Sign out', icon: Icons.logout_rounded, onPressed: auth.logout),
+            AppSecondaryButton(label: context.tr('Sign out'), icon: Icons.logout_rounded, onPressed: auth.logout),
           ],
         ),
       ),

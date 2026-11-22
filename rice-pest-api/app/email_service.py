@@ -4,8 +4,10 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 # ---- CONFIG: put YOUR sender Gmail + its 16-char App Password here ----
-SMTP_HOST = "smtp.gmail.com"
-SMTP_PORT = 587
+# SMTP_HOST / SMTP_PORT default to Gmail (STARTTLS on 587). Another provider
+# (e.g. if Gmail refuses sign-ins from Vercel) only needs these two set.
+SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com").strip() or "smtp.gmail.com"
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587") or "587")
 SENDER_EMAIL = os.getenv("SMTP_USERNAME", "YOUR_PROJECT_GMAIL@gmail.com")
 SENDER_APP_PASSWORD = os.getenv("SMTP_PASSWORD", "PASTE_16_CHAR_APP_PASSWORD_NO_SPACES")
 # ------------------------------------------------------------------------

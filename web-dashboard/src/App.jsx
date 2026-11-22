@@ -1,14 +1,17 @@
-﻿import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, clearSession, hasToken, SESSION_EXPIRED } from './api.js';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { api, clearSession, hasToken, logout, SESSION_EXPIRED } from './api.js';
 import Avatar from './components/Avatar.jsx';
 import { Logo } from './components/Brand.jsx';
 import ErrorBoundary from './components/ErrorBoundary.jsx';
 import Icon from './components/icons.jsx';
+import LanguageMenu from './components/LanguageMenu.jsx';
 import LoadingScreen from './components/LoadingScreen.jsx';
 import LoginScreen, { accessProblem, STAFF } from './components/LoginScreen.jsx';
-
+import NotificationBell, { Toast } from './components/NotificationBell.jsx';
 import Sidebar from './components/Sidebar.jsx';
+import { currentLocale, hasStoredLanguage, setLanguage, translate, useI18n } from './i18n/index.jsx';
 import { useInterval, useOnline } from './lib.js';
+import ActivityPage from './pages/ActivityPage.jsx';
 import CriteriaPage from './pages/CriteriaPage.jsx';
 import GuidePage from './pages/GuidePage.jsx';
 import HistoryPage from './pages/HistoryPage.jsx';
@@ -24,6 +27,7 @@ import TreatmentsPage from './pages/TreatmentsPage.jsx';
 import UsersPage from './pages/UsersPage.jsx';
 
 // Who sees what. The first item is the page shown after sign-in.
+// Labels are English; they are translated where shown.
 const NAV = {
   technician: [
     {
@@ -75,6 +79,7 @@ const NAV = {
       items: [
         { id: 'reports', label: 'Report export', icon: 'fileDown', Page: ReportsPage },
         { id: 'users', label: 'User management', icon: 'users', Page: UsersPage, badge: 'approvals' },
+        { id: 'activity', label: 'Activity logs', icon: 'activity', Page: ActivityPage },
       ],
     },
   ],
@@ -105,16 +110,15 @@ function writeSeen(email, n) {
   }
 }
 
-const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
-
 /** What the bell lists for this role, from the sidebar counts. */
-function bellItems(role, b) {
+function bellItems(role, b, t) {
+  const n = (k) => b[k] || 0;
   if (role === 'technician') {
-    return [{ id: 'pending', count: b.pending || 0, alert: true, tone: 'bg-orange-500', page: 'queue', text: `${plural(b.pending || 0, 'observation')} waiting in your validation queue` }];
+    return [{ id: 'pending', count: n('pending'), alert: true, tone: 'bg-orange-500', page: 'queue', text: t(n('pending') === 1 ? '{n} observation waiting in your validation queue' : '{n} observations waiting in your validation queue', { n: n('pending') }) }];
   }
   return [
-    { id: 'escalated', count: b.escalated || 0, alert: true, tone: 'bg-violet-600', page: 'escalations', text: `${plural(b.escalated || 0, 'case')} waiting for your review` },
-    { id: 'approvals', count: b.approvals || 0, alert: true, tone: 'bg-orange-500', page: 'users', text: `${plural(b.approvals || 0, 'account')} waiting for approval` },
+    { id: 'escalated', count: n('escalated'), alert: true, tone: 'bg-violet-600', page: 'escalations', text: t(n('escalated') === 1 ? '{n} case waiting for your review' : '{n} cases waiting for your review', { n: n('escalated') }) },
+    { id: 'approvals', count: n('approvals'), alert: true, tone: 'bg-orange-500', page: 'users', text: t(n('approvals') === 1 ? '{n} account waiting for approval' : '{n} accounts waiting for approval', { n: n('approvals') }) },
   ];
 }
 
@@ -123,7 +127,13 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const loginRole = () => (window.location.pathname.replace(/\/+$/, '') === '/technician-login' ? 'technician' : 'agriculturist');
 /** Resolves with `promise`, but not sooner than `ms`, so each loading step is seen. */
 const atLeast = (promise, ms) => Promise.all([promise, wait(ms)]).then(([value]) => value);
-const today = () => new Intl.DateTimeFormat('en-PH', { weekday: 'short', month: 'short', day: 'numeric' }).format(new Date());
+const today = () => {
+  try {
+    return new Intl.DateTimeFormat(currentLocale(), { weekday: 'short', month: 'short', day: 'numeric' }).format(new Date());
+  } catch {
+    return new Intl.DateTimeFormat('en-PH', { weekday: 'short', month: 'short', day: 'numeric' }).format(new Date());
+  }
+};
 
 function readCollapsed() {
   try {
@@ -153,7 +163,8 @@ async function fetchBadges(viewer) {
 }
 
 export default function App() {
-  // login â†’ loading (animated checks) â†’ ready. A saved session starts at loading.
+  const { t } = useI18n();
+  // login → loading (animated checks) → ready. A saved session starts at loading.
   const [phase, setPhase] = useState(() => (hasToken() ? 'loading' : 'login'));
   const [justSignedIn, setJustSignedIn] = useState(false);
   const [attempt, setAttempt] = useState(0);
@@ -186,6 +197,7 @@ export default function App() {
 
   useEffect(() => {
     const onExpired = () => toLogin('Your session expired. Please sign in again.');
+    // (messages stay English here and are translated where they are shown)
     const onHash = () => setPage(pageFromHash());
     window.addEventListener(SESSION_EXPIRED, onExpired);
     window.addEventListener('hashchange', onHash);
@@ -207,6 +219,8 @@ export default function App() {
       try {
         const me = await atLeast(api.me(), pace);
         if (!alive) return;
+        // The language saved on the account, unless one was picked in this browser.
+        if (!hasStoredLanguage() && me.preferred_language) setLanguage(me.preferred_language, { remember: false });
         if (!STAFF.includes(me.role) || me.role !== loginRole()) {
           toLogin(accessProblem('approved', me.role, loginRole()));
           return;
@@ -235,8 +249,8 @@ export default function App() {
         setLoad((l) => ({
           ...l,
           error: {
-            title: err.kind === 'network' ? "Can't reach the server" : "We couldn't open the dashboard",
-            text: err.message || 'Something went wrong. Please try again.',
+            title: translate(err.kind === 'network' ? "Can't reach the server" : "We couldn't open the dashboard"),
+            text: translate(err.message || 'Something went wrong. Please try again.'),
             offline: err.kind === 'network',
           },
         }));
@@ -284,7 +298,8 @@ export default function App() {
     if (lastTotal.current !== null && total > lastTotal.current) {
       const n = total - lastTotal.current;
       setToast({
-        title: n === 1 ? 'New submission received' : `${n} new submissions received`,
+        title: n === 1 ? 'New submission received' : '{n} new submissions received',
+        n,
         text: 'A farmer sent an observation from the field.',
         page: INBOX[viewer.role],
         action: viewer.role === 'technician' ? 'Open the validation queue' : 'Open',
@@ -327,15 +342,21 @@ export default function App() {
     );
   }
 
+  /** Sign out: the server ends the session too (best effort, works offline). */
+  const signOut = () => {
+    logout();
+    toLogin('');
+  };
+
   if (phase === 'loading' || !viewer) {
     return (
       <LoadingScreen
-        steps={LOAD_STEPS}
+        steps={LOAD_STEPS.map((step) => t(step))}
         current={load.step}
         name={load.name}
         error={load.error}
         onRetry={() => setAttempt((a) => a + 1)}
-        onSignOut={() => toLogin('')}
+        onSignOut={signOut}
       />
     );
   }
@@ -351,6 +372,14 @@ export default function App() {
   const name = viewer.full_name || viewer.email;
   const { Page } = current;
   const fresh = seen === null || total === undefined ? 0 : Math.max(0, total - seen);
+  const toastShown = toast && {
+    ...toast,
+    title: t(toast.title, { n: toast.n }),
+    text: t(toast.text),
+    action: t(toast.action),
+  };
+  // Saved on the account too (its notifications use it); best effort.
+  const saveLanguage = (code) => api.setLanguage(code).catch(() => {});
 
   return (
     <div className="flex min-h-full bg-canvas">
@@ -362,7 +391,7 @@ export default function App() {
         collapsed={collapsed}
         onToggle={() => setCollapsed((c) => !c)}
         onNavigate={go}
-        onSignOut={() => toLogin('')}
+        onSignOut={signOut}
         mobileOpen={menuOpen}
         onCloseMobile={() => setMenuOpen(false)}
         freshId={fresh > 0 ? inbox : null}
@@ -373,7 +402,7 @@ export default function App() {
           <button
             type="button"
             onClick={() => setMenuOpen(true)}
-            aria-label="Open menu"
+            aria-label={t('Open menu')}
             className="rounded-lg p-2 text-ink hover:bg-canvas focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 lg:hidden"
           >
             <Icon name="menu" />
@@ -381,30 +410,32 @@ export default function App() {
           <button
             type="button"
             onClick={() => setCollapsed((c) => !c)}
-            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            aria-label={t(collapsed ? 'Expand sidebar' : 'Collapse sidebar')}
+            title={t(collapsed ? 'Expand sidebar' : 'Collapse sidebar')}
             className="hidden rounded-lg p-2 text-ink2 hover:bg-canvas hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 lg:inline-flex"
           >
             <Icon name={collapsed ? 'panelOpen' : 'panelClose'} />
           </button>
           <Logo className="h-8 w-8 lg:hidden" />
-          <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-2 text-sm">
-            <span className="hidden shrink-0 text-ink2 sm:inline">{current.group}</span>
+          <nav aria-label={t('Breadcrumb')} className="flex min-w-0 items-center gap-2 text-sm">
+            <span className="hidden shrink-0 text-ink2 sm:inline">{t(current.group)}</span>
             <Icon name="chevronRight" className="hidden h-4 w-4 text-muted sm:block" />
             <span className="flex min-w-0 items-center gap-2 font-semibold text-ink">
               <Icon name={current.icon} className="h-4 w-4 text-brand-700" />
-              <span className="truncate">{current.label}</span>
+              <span className="truncate">{t(current.label)}</span>
             </span>
           </nav>
+          {/* Language: English / Filipino / Kinaray-a, beside the navigation. */}
+          <LanguageMenu onPicked={saveLanguage} align="left" />
           <div className="ml-auto flex shrink-0 items-center gap-3">
             {!online && (
               <span className="inline-flex items-center gap-1.5 rounded-full bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-700 ring-1 ring-red-200">
                 <Icon name="wifiOff" className="h-3.5 w-3.5" />
-                Offline
+                {t('Offline')}
               </span>
             )}
             <span className="hidden text-sm text-ink2 md:inline">{today()}</span>
-
+            <NotificationBell fresh={fresh} items={bellItems(viewer.role, badges, t)} onOpenPage={go} onMarkSeen={markSeen} />
             <Avatar path={viewer.avatar_url} name={name} size="sm" />
           </div>
         </header>
@@ -412,7 +443,7 @@ export default function App() {
         {!online && (
           <div className="flex items-center justify-center gap-2 border-b border-red-200 bg-red-50 px-4 py-2 text-center text-sm text-red-700">
             <Icon name="wifiOff" className="h-4 w-4" />
-            You're offline. Data can't load or be saved until the connection is back.
+            {t("You're offline. Data can't load or be saved until the connection is back.")}
           </div>
         )}
 
@@ -422,6 +453,15 @@ export default function App() {
           </ErrorBoundary>
         </main>
       </div>
-      </div>
+      <Toast
+        toast={toastShown}
+        onClose={closeToast}
+        onAction={() => {
+          const target = toast?.page;
+          closeToast();
+          if (target) go(target);
+        }}
+      />
+    </div>
   );
 }

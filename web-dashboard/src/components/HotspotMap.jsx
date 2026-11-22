@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import L from './leaflet-global.js';
 import 'leaflet.heat';
 import 'leaflet/dist/leaflet.css';
+import { useT } from '../i18n/index.jsx';
 import { fmtCount, fmtDate } from '../lib.js';
 import { LEVEL_COLOR } from './ui.jsx';
 
@@ -57,6 +58,7 @@ export default function HotspotMap({
   const rendererRef = useRef(null);
   const selectRef = useRef(onSelect);
   selectRef.current = onSelect;
+  const t = useT();
 
   useEffect(() => {
     if (mapObj.current) return undefined;
@@ -116,8 +118,8 @@ export default function HotspotMap({
         })
           .bindTooltip(
             `<b>${esc(h.barangay)}</b>, ${esc(h.municipality)}<br/>` +
-              `Highest level: <b>${esc(h.level)}</b> · ${esc(h.records)} record${h.records === 1 ? '' : 's'}<br/>` +
-              `${esc(h.pests.join(', '))}<br/>Latest: ${esc(fmtDate(h.latest))}`,
+              `${esc(t('Highest level:'))} <b>${esc(h.level)}</b> · ${esc(h.records === 1 ? t('{n} record', { n: h.records }) : t('{n} records', { n: h.records }))}<br/>` +
+              `${esc(h.pests.join(', '))}<br/>${esc(t('Latest: {date}', { date: fmtDate(h.latest) }))}`,
             { sticky: true },
           )
           .addTo(layer);
@@ -125,7 +127,7 @@ export default function HotspotMap({
 
       for (const p of points) {
         const color = LEVEL_COLOR[p.level] || NO_LEVEL;
-        const count = p.is_disease ? '' : ` · ${esc(fmtCount(p.count))}`;
+        const count = p.is_disease ? '' : ` · ${esc(t(fmtCount(p.count)))}`;
         const marker = L.circleMarker([p.lat, p.lng], {
           renderer,
           radius: 6,
@@ -134,7 +136,7 @@ export default function HotspotMap({
           fillOpacity: 0.95,
           weight: 2,
         }).bindTooltip(
-          `<b>${p.sample ? 'Sample' : `#${esc(p.id)}`} ${esc(p.pest)}</b> · ${esc(p.level || 'no level')}${count}<br/>` +
+          `<b>${p.sample ? esc(t('Sample')) : `#${esc(p.id)}`} ${esc(p.pest)}</b> · ${esc(p.level || t('no level'))}${count}<br/>` +
             `${esc(p.barangay || '—')}, ${esc(p.municipality)} · ${esc(fmtDate(p.created_at))}`,
         );
         if (!p.sample) marker.on('click', () => selectRef.current?.(p));
@@ -144,7 +146,7 @@ export default function HotspotMap({
 
     const coords = [...points.map((p) => [p.lat, p.lng]), ...(mode === 'heat' ? [] : hotspots.map((h) => [h.lat, h.lng]))];
     if (coords.length) map.fitBounds(L.latLngBounds(coords).pad(0.25), { maxZoom: 14 });
-  }, [points, hotspots, mode, weightBy]);
+  }, [points, hotspots, mode, weightBy, t]);
 
   // Directional spread: an arrow from each pest's Week 1 centre to its Week 2 centre.
   useEffect(() => {
@@ -186,17 +188,17 @@ export default function HotspotMap({
         <div ref={mapRef} className={`w-full rounded-xl border border-line ${className}`} />
         {mode === 'heat' && (
           <div className="pointer-events-none absolute bottom-3 left-3 z-[1000] max-w-[260px] rounded-lg bg-white/95 px-3 py-2 text-xs font-medium text-ink shadow-md ring-1 ring-line">
-            {HEAT_NOTE}
+            {t(HEAT_NOTE)}
           </div>
         )}
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-2.5 text-sm text-ink2">
         {mode === 'heat' ? (
           <div className="flex flex-wrap items-center gap-3 rounded-full border border-line bg-white px-3 py-1.5 shadow-sm">
-            <span className="font-semibold text-ink">{weightBy === 'cases' ? 'Number of validated cases' : 'Weighted by infestation level'}</span>
-            <span className="text-xs font-semibold">Low</span>
+            <span className="font-semibold text-ink">{weightBy === 'cases' ? t('Number of validated cases') : t('Weighted by infestation level')}</span>
+            <span className="text-xs font-semibold">{t('Low')}</span>
             <span className="inline-block h-3 w-40 rounded-full" style={{ background: gradientCss }} aria-hidden="true" />
-            <span className="text-xs font-semibold">High</span>
+            <span className="text-xs font-semibold">{t('High')}</span>
           </div>
         ) : (
           <>
@@ -208,21 +210,21 @@ export default function HotspotMap({
             ))}
             <span className="flex items-center gap-2 rounded-full border border-line bg-white px-3 py-1.5 shadow-sm">
               <span className="inline-block h-5 w-5 rounded-full" style={{ background: NO_LEVEL }} />
-              Disease report (no level)
+              {t('Disease report (no level)')}
             </span>
             <span className="flex items-center gap-2 rounded-full border border-line bg-white px-3 py-1.5 shadow-sm">
               <span className="inline-block h-5 w-5 rounded-full border-2 border-dashed border-ink2" />
-              Barangay hotspot, coloured by its highest confirmed level
+              {t('Barangay hotspot, coloured by its highest confirmed level')}
             </span>
           </>
         )}
         {spread.some((s) => s.status === 'moved') && (
           <span className="flex items-center gap-2 rounded-full border border-line bg-white px-3 py-1.5 shadow-sm">
             <span className="inline-block w-6 border-t-[3px] border-dashed border-ink2" />
-            Direction reported cases moved
+            {t('Direction reported cases moved')}
           </span>
         )}
-        {onSelect && mode !== 'heat' && <span className="text-muted">Click a point to open the record.</span>}
+        {onSelect && mode !== 'heat' && <span className="text-muted">{t('Click a point to open the record.')}</span>}
       </div>
     </div>
   );

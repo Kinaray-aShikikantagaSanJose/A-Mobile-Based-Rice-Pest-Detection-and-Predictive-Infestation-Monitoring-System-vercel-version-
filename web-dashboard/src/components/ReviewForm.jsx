@@ -3,6 +3,7 @@ import { api } from '../api.js';
 import { fmtConf, fmtCount, LEVELS, PEST_OPTIONS, pestLabel, useAction, useDebounced } from '../lib.js';
 import Icon from './icons.jsx';
 import { Button, ErrorNote, Field, LEVEL_COLOR, LevelBadge, Select } from './ui.jsx';
+import { useT } from '../i18n/index.jsx';
 
 const RETURN_REASONS = [
   'The photo is too blurry. Please take a new, closer photo.',
@@ -59,12 +60,13 @@ function StepTitle({ n, children, hint, error }) {
 
 /** What still has to be filled in before the review can be sent. */
 function MissingNote({ items }) {
+  const t = useT();
   if (!items.length) return null;
   return (
     <div role="alert" className="animate-shake rounded-xl border-2 border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800">
       <div className="flex items-center gap-2 font-bold">
         <Icon name="alert" className="h-4 w-4" />
-        {items.length === 1 ? 'One thing is missing' : `${items.length} things are missing`}
+        {items.length === 1 ? t('One thing is missing') : t('{n} things are missing', { n: items.length })}
       </div>
       <ul className="mt-1.5 list-disc space-y-0.5 pl-6">
         {items.map((i) => (
@@ -106,22 +108,24 @@ function ModeButton({ active, onClick, title, hint, tone = 'brand', disabled }) 
 
 /** Step 2: Return (photo unclear) · Validate (confirm the level) · Escalate (complex case, technicians only). */
 function Decisions({ decision, choose, canEscalate }) {
+  const t = useT();
   return (
     <div className={`grid gap-2 ${canEscalate ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`}>
-      <ModeButton active={decision === 'return'} onClick={() => choose('return')} tone="orange" title="Return" hint="Photo unclear: the farmer retakes it" />
-      <ModeButton active={decision === 'validate'} onClick={() => choose('validate')} title="Validate" hint="Confirm the infestation level" />
+      <ModeButton active={decision === 'return'} onClick={() => choose('return')} tone="orange" title={t('Return')} hint={t('Photo unclear: the farmer retakes it')} />
+      <ModeButton active={decision === 'validate'} onClick={() => choose('validate')} title={t('Validate')} hint={t('Confirm the infestation level')} />
       {canEscalate && (
-        <ModeButton active={decision === 'escalate'} onClick={() => choose('escalate')} tone="purple" title="Escalate" hint="Complex case: an agriculturist diagnoses it" />
+        <ModeButton active={decision === 'escalate'} onClick={() => choose('escalate')} tone="purple" title={t('Escalate')} hint={t('Complex case: an agriculturist diagnoses it')} />
       )}
     </div>
   );
 }
 
 function ReasonForm({ kind, busy, error, onSubmit }) {
+  const t = useT();
   const [reason, setReason] = useState('');
   const [attempted, setAttempted] = useState(false);
   const isReturn = kind === 'return';
-  const missing = reason.trim() ? [] : [isReturn ? 'Write what the farmer should fix, or pick one of the reasons below.' : 'Write why this case needs an agriculturist.'];
+  const missing = reason.trim() ? [] : [isReturn ? t('Write what the farmer should fix, or pick one of the reasons below.') : t('Write why this case needs an agriculturist.')];
   const send = () => {
     setAttempted(true);
     if (!missing.length) onSubmit({ action: kind, reason: reason.trim() });
@@ -129,11 +133,11 @@ function ReasonForm({ kind, busy, error, onSubmit }) {
   return (
     <div className="space-y-3">
       <Field
-        label={isReturn ? 'What should the farmer fix? *' : 'Why it needs an agriculturist *'}
+        label={isReturn ? t('What should the farmer fix? *') : t('Why it needs an agriculturist *')}
         hint={
           isReturn
-            ? 'The farmer sees this in the app and retakes the photo. The new photo goes through the review again.'
-            : 'Only technicians and agriculturists see this. The farmer is told an agriculturist will review it.'
+            ? t('The farmer sees this in the app and retakes the photo. The new photo goes through the review again.')
+            : t('Only technicians and agriculturists see this. The farmer is told an agriculturist will review it.')
         }
       >
         <textarea className={`input min-h-[88px] ${fieldError(attempted && missing.length)}`} value={reason} onChange={(e) => setReason(e.target.value)} maxLength={1000} />
@@ -142,7 +146,7 @@ function ReasonForm({ kind, busy, error, onSubmit }) {
         <div className="flex flex-wrap gap-2">
           {RETURN_REASONS.map((r) => (
             <button key={r} type="button" onClick={() => setReason(r)} className="rounded-full border border-line bg-white px-3 py-1.5 text-sm text-ink2 hover:border-brand-600">
-              {r}
+              {t(r)}
             </button>
           ))}
         </div>
@@ -151,7 +155,7 @@ function ReasonForm({ kind, busy, error, onSubmit }) {
       <ErrorNote message={error} />
       <div className="flex justify-end">
         <Button size="xl" variant={isReturn ? 'secondary' : 'primary'} busy={busy} onClick={send}>
-          {isReturn ? 'Return to the farmer' : 'Escalate to an agriculturist'}
+          {isReturn ? t('Return to the farmer') : t('Escalate to an agriculturist')}
         </Button>
       </div>
     </div>
@@ -159,9 +163,10 @@ function ReasonForm({ kind, busy, error, onSubmit }) {
 }
 
 function CountEditor({ countable, setCountable, count, setCount, invalid }) {
+  const t = useT();
   return (
     <div className="flex flex-wrap items-end gap-4">
-      <Field label="Count" className="w-40">
+      <Field label={t('Count')} className="w-40">
         <input
           type="number"
           min="0"
@@ -170,15 +175,15 @@ function CountEditor({ countable, setCountable, count, setCount, invalid }) {
           className={`input ${fieldError(invalid)}`}
           value={countable ? count : ''}
           disabled={!countable}
-          placeholder={countable ? 'Number seen' : 'Not countable'}
+          placeholder={countable ? t('Number seen') : t('Not countable')}
           onChange={(e) => setCount(e.target.value)}
         />
       </Field>
       <label className="flex cursor-pointer items-center gap-2 pb-2 text-sm text-ink">
         <input type="checkbox" className="h-4 w-4 accent-brand-700" checked={!countable} onChange={(e) => setCountable(!e.target.checked)} />
-        Not countable (insects too close together or unclear)
+        {t('Not countable (insects too close together or unclear)')}
       </label>
-      {invalid && <span className="w-full text-sm font-semibold text-red-600">Enter a whole number, or tick "Not countable".</span>}
+      {invalid && <span className="w-full text-sm font-semibold text-red-600">{t('Enter a whole number, or tick "Not countable".')}</span>}
     </div>
   );
 }
@@ -187,6 +192,7 @@ const LEVEL_HINTS = { LOW: 'Low infestation', MEDIUM: 'Moderate infestation', HI
 
 /** The three levels as large colour cards (the colours used on the map and in every report). */
 function LevelPicker({ level, suggested, onPick, error }) {
+  const t = useT();
   return (
     <div className={`grid gap-3 rounded-2xl sm:grid-cols-3 ${error ? 'p-1 ring-2 ring-red-300' : ''}`}>
       {LEVELS.map((lv) => {
@@ -203,12 +209,12 @@ function LevelPicker({ level, suggested, onPick, error }) {
           >
             <span className="flex items-center gap-2.5">
               <span className="h-6 w-6 shrink-0 rounded-full ring-2 ring-white/70" style={{ background: on ? '#fff' : color }} />
-              <span className="text-xl font-extrabold tracking-wide">{lv}</span>
+              <span className="text-xl font-extrabold tracking-wide">{t(lv)}</span>
             </span>
-            <span className={`mt-1 block text-sm ${on ? 'text-white/90' : 'text-ink2'}`}>{LEVEL_HINTS[lv]}</span>
+            <span className={`mt-1 block text-sm ${on ? 'text-white/90' : 'text-ink2'}`}>{t(LEVEL_HINTS[lv])}</span>
             {lv === suggested && (
               <span className={`mt-2 inline-block rounded-full px-2 py-0.5 text-[11px] font-bold uppercase ${on ? 'bg-white/25 text-white' : 'bg-canvas text-ink2'}`}>
-                Suggested
+                {t('Suggested')}
               </span>
             )}
           </button>
@@ -220,23 +226,24 @@ function LevelPicker({ level, suggested, onPick, error }) {
 
 /** Diagnosis + guidance: required when an agriculturist resolves an escalated case, optional otherwise. */
 function NotesFields({ required, isPest, diagnosis, setDiagnosis, guidance, setGuidance, showErrors }) {
-  const opt = required ? ' *' : ' (optional)';
+  const t = useT();
+  const opt = required ? ' *' : ` (${t('optional')})`;
   return (
     <>
       {(required || !isPest) && (
-        <Field label={`Diagnosis${opt}`}>
+        <Field label={`${t('Diagnosis')}${opt}`}>
           <textarea
             className={`input min-h-[64px] ${fieldError(showErrors && required && !diagnosis.trim())}`}
             value={diagnosis}
             onChange={(e) => setDiagnosis(e.target.value)}
             maxLength={2000}
-            placeholder={isPest ? 'e.g. Brown planthopper build-up at the base of the tillers' : 'e.g. Bacterial leaf blight'}
+            placeholder={isPest ? t('e.g. Brown planthopper build-up at the base of the tillers') : t('e.g. Bacterial leaf blight')}
           />
         </Field>
       )}
       <Field
-        label={`${isPest && !required ? 'Note to the farmer' : 'Guidance for the farmer'}${opt}`}
-        hint="Shown on the farmer's record. Describe approaches; the app tells farmers to consult their technician before using any pesticide."
+        label={`${isPest && !required ? t('Note to the farmer') : t('Guidance for the farmer')}${opt}`}
+        hint={t("Shown on the farmer's record. Describe approaches; the app tells farmers to consult their technician before using any pesticide.")}
       >
         <textarea
           className={`input min-h-[88px] ${fieldError(showErrors && required && !guidance.trim())}`}
@@ -251,6 +258,7 @@ function NotesFields({ required, isPest, diagnosis, setDiagnosis, guidance, setG
 
 /** Validate a pest report: damage indicators, the API's suggestion, the reviewer's level. */
 function PestValidate({ scan, pest, count, countReady, escalated, busy, error, onSubmit, onAttempt }) {
+  const t = useT();
   const [indicators, setIndicators] = useState([]);
   const [picked, setPicked] = useState(null); // null = follow the suggestion
   const [diagnosis, setDiagnosis] = useState('');
@@ -273,11 +281,11 @@ function PestValidate({ scan, pest, count, countReady, escalated, busy, error, o
 
   const toggle = (i) => setIndicators((prev) => (prev.includes(i) ? prev.filter((x) => x !== i) : [...prev, i]));
   const missing = [
-    !pest && 'Step 1: choose the pest.',
-    !countReady && 'Step 1: enter the count, or tick "Not countable".',
-    !level && 'Pick the infestation level: LOW, MEDIUM or HIGH.',
-    escalated && !diagnosis.trim() && 'Write the diagnosis.',
-    escalated && !guidance.trim() && 'Write the guidance for the farmer.',
+    !pest && t('Step 1: choose the pest.'),
+    !countReady && t('Step 1: enter the count, or tick "Not countable".'),
+    !level && t('Pick the infestation level: LOW, MEDIUM or HIGH.'),
+    escalated && !diagnosis.trim() && t('Write the diagnosis.'),
+    escalated && !guidance.trim() && t('Write the guidance for the farmer.'),
   ].filter(Boolean);
   const loadingSuggestion = s.pending && Boolean(pest) && countReady;
   const send = () => {
@@ -299,11 +307,11 @@ function PestValidate({ scan, pest, count, countReady, escalated, busy, error, o
   return (
     <div className="space-y-4 rounded-xl border border-brand-200 bg-brand-50/50 p-4">
       <p className="text-xs text-ink2">
-        {pest ? pestLabel(pest) : 'Pest not chosen'} · {countReady ? fmtCount(count) : 'count missing'} · crop stage {scan.crop_stage || 'not given'}. Tick
-        the damage you can see; the suggestion updates as you go.
+        {pest ? t(pestLabel(pest)) : t('Pest not chosen')} · {countReady ? t(fmtCount(count)) : t('count missing')} ·{' '}
+        {t('crop stage {stage}', { stage: scan.crop_stage ? t(scan.crop_stage) : t('not given') })}. {t('Tick the damage you can see; the suggestion updates as you go.')}
       </p>
 
-      <Field as="div" label="Visible damage indicators">
+      <Field as="div" label={t('Visible damage indicators')}>
         {available.length ? (
           <div className="space-y-1.5">
             {available.map((i) => (
@@ -314,13 +322,13 @@ function PestValidate({ scan, pest, count, countReady, escalated, busy, error, o
             ))}
           </div>
         ) : (
-          <p className="text-xs text-muted">{!pest || !countReady ? 'Finish step 1 first.' : s.error ? 'Indicators unavailable.' : fresh ? 'None listed for this pest.' : 'Loading…'}</p>
+          <p className="text-xs text-muted">{!pest || !countReady ? t('Finish step 1 first.') : s.error ? t('Indicators unavailable.') : fresh ? t('None listed for this pest.') : t('Loading…')}</p>
         )}
       </Field>
 
       <div className={`rounded-lg border border-line bg-white p-3 ${countReady && pest ? '' : 'opacity-50'}`}>
         <div className="flex flex-wrap items-center gap-2 text-sm">
-          <span className="font-semibold text-ink">Suggested level:</span>
+          <span className="font-semibold text-ink">{t('Suggested level:')}</span>
           {suggested ? <LevelBadge level={suggested} /> : <span className="text-muted">—</span>}
           {s.pending && pest && countReady && <span className="h-3 w-3 animate-spin rounded-full border-2 border-brand-700 border-r-transparent" />}
         </div>
@@ -331,16 +339,16 @@ function PestValidate({ scan, pest, count, countReady, escalated, busy, error, o
             ))}
           </ul>
         )}
-        {s.error && <p className="mt-2 text-xs text-red-600">Couldn't load the suggestion ({s.error}). You can still set the level yourself.</p>}
+        {s.error && <p className="mt-2 text-xs text-red-600">{t("Couldn't load the suggestion ({error}). You can still set the level yourself.", { error: s.error })}</p>}
       </div>
 
-      <Field as="div" label="Your level *">
+      <Field as="div" label={t('Your level *')}>
         <LevelPicker level={level} suggested={suggested} onPick={setPicked} error={attempted && !level} />
         {picked && suggested && picked !== suggested && (
           <p className="mt-2 text-sm text-orange-700">
-            You're overriding the suggestion ({suggested}). Your level is the one recorded and shown everywhere.{' '}
+            {t("You're overriding the suggestion ({level}). Your level is the one recorded and shown everywhere.", { level: t(suggested) })}{' '}
             <button type="button" className="font-semibold underline" onClick={() => setPicked(null)}>
-              Use the suggestion
+              {t('Use the suggestion')}
             </button>
           </p>
         )}
@@ -359,9 +367,9 @@ function PestValidate({ scan, pest, count, countReady, escalated, busy, error, o
       {attempted && <MissingNote items={missing} />}
       <ErrorNote message={error} />
       <div className="flex flex-wrap items-center justify-end gap-3">
-        {loadingSuggestion && <span className="text-sm text-ink2">Updating the suggestion…</span>}
+        {loadingSuggestion && <span className="text-sm text-ink2">{t('Updating the suggestion…')}</span>}
         <Button size="xl" busy={busy} disabled={loadingSuggestion} onClick={send}>
-          Validate as {level || '…'}
+          {t('Validate as {level}', { level: level ? t(level) : '…' })}
         </Button>
       </div>
     </div>
@@ -370,14 +378,15 @@ function PestValidate({ scan, pest, count, countReady, escalated, busy, error, o
 
 /** Validate a disease report: no model result; the reviewer sets the level, diagnosis optional unless escalated. */
 function DiseaseValidate({ escalated, busy, error, onSubmit }) {
+  const t = useT();
   const [level, setLevel] = useState(null);
   const [diagnosis, setDiagnosis] = useState('');
   const [guidance, setGuidance] = useState('');
   const [attempted, setAttempted] = useState(false);
   const missing = [
-    !level && 'Pick how bad it is in the field: LOW, MEDIUM or HIGH.',
-    escalated && !diagnosis.trim() && 'Write the diagnosis.',
-    escalated && !guidance.trim() && 'Write the guidance for the farmer.',
+    !level && t('Pick how bad it is in the field: LOW, MEDIUM or HIGH.'),
+    escalated && !diagnosis.trim() && t('Write the diagnosis.'),
+    escalated && !guidance.trim() && t('Write the guidance for the farmer.'),
   ].filter(Boolean);
   const send = () => {
     setAttempted(true);
@@ -385,7 +394,7 @@ function DiseaseValidate({ escalated, busy, error, onSubmit }) {
   };
   return (
     <div className="space-y-4 rounded-xl border border-brand-200 bg-brand-50/50 p-4">
-      <Field as="div" label="How bad is it in the field? *">
+      <Field as="div" label={t('How bad is it in the field? *')}>
         <LevelPicker level={level} onPick={setLevel} error={attempted && !level} />
       </Field>
       <NotesFields
@@ -401,7 +410,7 @@ function DiseaseValidate({ escalated, busy, error, onSubmit }) {
       <ErrorNote message={error} />
       <div className="flex flex-wrap items-center justify-end gap-3">
         <Button size="xl" busy={busy} onClick={send}>
-          Validate as {level || '…'}
+          {t('Validate as {level}', { level: level ? t(level) : '…' })}
         </Button>
       </div>
     </div>
@@ -410,25 +419,26 @@ function DiseaseValidate({ escalated, busy, error, onSubmit }) {
 
 /** Step 1 for a pest report: the model result's pest and count, confirmed or corrected. */
 function PestCheck({ ai, pest, setPest, countable, setCountable, count, setCount, countOk, sameAsAi, resetToAi, showErrors }) {
+  const t = useT();
   const aiCount = ai.count ?? null;
   const pestMissing = showErrors && !pest;
   return (
     <div className={`space-y-3 rounded-xl border bg-white p-4 transition-colors ${showErrors && (!pest || !countOk) ? 'border-red-300 ring-2 ring-red-100' : 'border-line'}`}>
       <p className="text-sm text-ink2">
-        <span className="font-semibold text-orange-700">Model result:</span>{' '}
+        <span className="font-semibold text-orange-700">{t('Model result:')}</span>{' '}
         {ai.pest ? (
           <>
             <b className="text-ink">{ai.pest_name}</b>
-            {ai.confidence != null && ` (${fmtConf(ai.confidence)})`} · {fmtCount(aiCount)}
+            {ai.confidence != null && ` (${fmtConf(ai.confidence)})`} · {t(fmtCount(aiCount))}
           </>
         ) : (
-          ai.message || 'No supported pest was named. Choose the pest and enter the count.'
+          ai.message || t('No supported pest was named. Choose the pest and enter the count.')
         )}
       </p>
       <div className="flex flex-wrap items-end gap-4">
-        <Field label="Pest *" className="w-64">
-          <Select value={pest} onChange={setPest} placeholder="Choose the pest…" options={PEST_OPTIONS} className={fieldError(pestMissing)} />
-          {pestMissing && <span className="mt-1 block text-sm font-semibold text-red-600">Choose the pest.</span>}
+        <Field label={t('Pest *')} className="w-64">
+          <Select value={pest} onChange={setPest} placeholder={t('Choose the pest…')} options={PEST_OPTIONS.map(([v, l]) => [v, t(l)])} className={fieldError(pestMissing)} />
+          {pestMissing && <span className="mt-1 block text-sm font-semibold text-red-600">{t('Choose the pest.')}</span>}
         </Field>
         <CountEditor
           countable={countable}
@@ -439,16 +449,16 @@ function PestCheck({ ai, pest, setPest, countable, setCountable, count, setCount
         />
       </div>
       {sameAsAi ? (
-        <p className="text-xs font-semibold text-brand-700">✓ Confirming the model result</p>
+        <p className="text-xs font-semibold text-brand-700">✓ {t('Confirming the model result')}</p>
       ) : (
         pest && (
           <p className="text-xs font-semibold text-orange-700">
-            Corrected by you
+            {t('Corrected by you')}
             {ai.pest && (
               <>
                 {' · '}
                 <button type="button" className="underline" onClick={resetToAi}>
-                  Use the model result
+                  {t('Use the model result')}
                 </button>
               </>
             )}
@@ -460,6 +470,7 @@ function PestCheck({ ai, pest, setPest, countable, setCountable, count, setCount
 }
 
 function PestReview({ scan, canEscalate, escalated, action, submit }) {
+  const t = useT();
   const ai = scan.ai || {};
   const aiCount = ai.count ?? null;
   const initialCountable = aiCount !== null || !ai.pest;
@@ -496,10 +507,10 @@ function PestReview({ scan, canEscalate, escalated, action, submit }) {
       <div ref={step1Ref}>
         <StepTitle
           n={1}
-          hint="Confirm the model result's pest and count, or correct them."
-          error={showStep1 ? (!pest ? 'You skipped this step: choose the pest first.' : 'Enter the count, or tick "Not countable".') : null}
+          hint={t("Confirm the model result's pest and count, or correct them.")}
+          error={showStep1 ? (!pest ? t('You skipped this step: choose the pest first.') : t('Enter the count, or tick "Not countable".')) : null}
         >
-          Check the result
+          {t('Check the result')}
         </StepTitle>
       </div>
       <PestCheck
@@ -515,7 +526,7 @@ function PestReview({ scan, canEscalate, escalated, action, submit }) {
         resetToAi={resetToAi}
         showErrors={showStep1}
       />
-      <StepTitle n={2}>Decision</StepTitle>
+      <StepTitle n={2}>{t('Decision')}</StepTitle>
       <Decisions decision={decision} choose={choose} canEscalate={canEscalate} />
       {decision === 'validate' && (
         <PestValidate
@@ -536,6 +547,7 @@ function PestReview({ scan, canEscalate, escalated, action, submit }) {
 }
 
 function DiseaseReview({ canEscalate, escalated, action, submit }) {
+  const t = useT();
   const [decision, setDecision] = useState(null);
   const choose = (d) => {
     action.setError('');
@@ -543,10 +555,10 @@ function DiseaseReview({ canEscalate, escalated, action, submit }) {
   };
   return (
     <div className="space-y-4">
-      <StepTitle n={1} hint="There is no model result for disease reports. Look at the photo and the symptoms the farmer described.">
-        Check the report
+      <StepTitle n={1} hint={t('There is no model result for disease reports. Look at the photo and the symptoms the farmer described.')}>
+        {t('Check the report')}
       </StepTitle>
-      <StepTitle n={2}>Decision</StepTitle>
+      <StepTitle n={2}>{t('Decision')}</StepTitle>
       <Decisions decision={decision} choose={choose} canEscalate={canEscalate} />
       {decision === 'validate' && <DiseaseValidate escalated={escalated} busy={action.busy} error={action.error} onSubmit={submit} />}
       {(decision === 'return' || decision === 'escalate') && <ReasonForm key={decision} kind={decision} busy={action.busy} error={action.error} onSubmit={submit} />}
@@ -555,12 +567,12 @@ function DiseaseReview({ canEscalate, escalated, action, submit }) {
 }
 
 const DONE = {
-  validate: (r) =>
+  validate: (r, t) =>
     r.report_type === 'pest'
-      ? `Observation #${r.id} validated: ${r.confirmed?.pest_name || 'pest'}, ${r.confirmed?.level || ''} infestation.`
-      : `Disease report #${r.id} validated: ${r.level || ''} level.`,
-  return: (r) => `Observation #${r.id} was returned. The farmer will retake the photo.`,
-  escalate: (r) => `Observation #${r.id} was escalated to an agriculturist.`,
+      ? t('Observation #{id} validated: {pest}, {level} infestation.', { id: r.id, pest: r.confirmed?.pest_name || t('pest'), level: r.confirmed?.level || '' })
+      : t('Disease report #{id} validated: {level} level.', { id: r.id, level: r.level || '' }),
+  return: (r, t) => t('Observation #{id} was returned. The farmer will retake the photo.', { id: r.id }),
+  escalate: (r, t) => t('Observation #{id} was escalated to an agriculturist.', { id: r.id }),
 };
 
 /**
@@ -569,13 +581,14 @@ const DONE = {
  * agriculturist resolving an escalated case records the diagnosis and guidance.
  */
 export default function ReviewForm({ scan, viewer, onDone }) {
+  const t = useT();
   const action = useAction();
   const canEscalate = viewer.role === 'technician';
   const escalated = scan.status === 'escalated';
   const submit = (body) =>
     action.run(async () => {
       const updated = await api.review(scan.id, body);
-      onDone(DONE[body.action](updated), updated);
+      onDone(DONE[body.action](updated, t), updated);
     });
   return scan.report_type === 'pest' ? (
     <PestReview scan={scan} canEscalate={canEscalate} escalated={escalated} action={action} submit={submit} />

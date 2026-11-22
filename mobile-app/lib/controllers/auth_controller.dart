@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../l10n/app_language.dart';
 import '../services/local_store.dart';
 import '../services/notification_service.dart';
 
@@ -59,6 +60,17 @@ class Session {
   /// Barangays a technician covers ([] = the whole municipality).
   final List<String> coverage;
 
+  /// Language saved on the account: en | fil | krj.
+  final String preferredLanguage;
+
+  /// Official PSGC codes of the saved municipality / barangay (null when the
+  /// names couldn't be matched, or for accounts saved before codes existed).
+  final String? municipalityPsgc;
+  final String? barangayPsgc;
+
+  /// 'gps' when the area was found from the phone's location, else 'manual'.
+  final String locationSource;
+
   const Session({
     required this.accessToken,
     required this.refreshToken,
@@ -72,7 +84,14 @@ class Session {
     this.id,
     this.avatarUrl,
     this.coverage = const [],
+    this.preferredLanguage = 'en',
+    this.municipalityPsgc,
+    this.barangayPsgc,
+    this.locationSource = 'manual',
   });
+
+  /// Both municipality and barangay are saved: no GPS lookup is needed.
+  bool get hasArea => municipality.isNotEmpty && barangay.isNotEmpty;
 
   /// From `/auth/login`, `/auth/refresh` (tokens + profile) or, with the
   /// current tokens, `/auth/me` (profile only).
@@ -92,6 +111,10 @@ class Session {
       id: (j['id'] as num?)?.toInt(),
       avatarUrl: _nonEmpty(j['avatar_url'] as String?),
       coverage: [for (final b in (j['coverage_barangays'] as List? ?? const [])) '$b'],
+      preferredLanguage: AppLang.fromCode(j['preferred_language'] as String?)?.name ?? 'en',
+      municipalityPsgc: _nonEmpty(j['municipality_psgc'] as String?),
+      barangayPsgc: _nonEmpty(j['barangay_psgc'] as String?),
+      locationSource: (j['location_source'] as String?) == 'gps' ? 'gps' : 'manual',
     );
   }
 
@@ -107,7 +130,11 @@ class Session {
       phone == o.phone &&
       id == o.id &&
       avatarUrl == o.avatarUrl &&
-      coverage.join(',') == o.coverage.join(',');
+      coverage.join(',') == o.coverage.join(',') &&
+      preferredLanguage == o.preferredLanguage &&
+      barangayPsgc == o.barangayPsgc &&
+      municipalityPsgc == o.municipalityPsgc &&
+      locationSource == o.locationSource;
 
   Map<String, dynamic> toJson() => {
         'access_token': accessToken,
@@ -122,6 +149,10 @@ class Session {
         'id': id,
         'avatar_url': avatarUrl,
         'coverage_barangays': coverage,
+        'preferred_language': preferredLanguage,
+        'municipality_psgc': municipalityPsgc,
+        'barangay_psgc': barangayPsgc,
+        'location_source': locationSource,
       };
 }
 
@@ -182,7 +213,10 @@ class AuthControllerImpl extends AuthController {
         // Farmers stay signed in: the refresh token renews the session, so
         // opening the app never asks for the password again. Agriculturist
         // sessions from older versions are not restored (web dashboard only).
-        if (s.refreshToken.isNotEmpty && s.email.isNotEmpty && s.role != AppRole.agriculturist) _session = s;
+        if (s.refreshToken.isNotEmpty && s.email.isNotEmpty && s.role != AppRole.agriculturist) {
+          _session = s;
+          AppLanguage.instance.adoptAccountLanguage(s.preferredLanguage);
+        }
       }
     } catch (e) {
       debugPrint('Failed to restore session: $e');
@@ -206,6 +240,8 @@ class AuthControllerImpl extends AuthController {
     _sessionExpired = false;
     _session = session;
     _lastEmail = session.email;
+    // The account's language, unless one was picked on this phone.
+    AppLanguage.instance.adoptAccountLanguage(session.preferredLanguage);
     notifyListeners();
     _enqueue(() async {
       await _secure.write(key: _kSession, value: jsonEncode(session.toJson()));

@@ -52,6 +52,18 @@ BLUR_MIN = 60.0          # variance of the Laplacian below this = blurry
 DARK_MAX = 40.0          # mean brightness below this = too dark
 BRIGHT_MIN = 225.0       # mean brightness above this = washed out
 MAX_IMAGE_SIDE = 2048    # stored photos are downscaled to this
+# "No pests found" is only concluded when the evidence is strong: a clear,
+# reasonably sharp photo of at least NO_PEST_MIN_SIDE px on its short side,
+# on which NO box of ANY class reaches NO_PEST_MAX_SCORE in either the photo
+# or its mirror image. Anything in between is "uncertain" (a technician
+# checks it); a failed model run is "failed". Never the other way round.
+# Calibration on the bundled photos (models/rice_pest.onnx): pest-free rice
+# fields scored 0.06-0.13, but a real rice bug photo the model misses scored
+# 0.178, so the default stays well below that. Raise it only after testing
+# on local photos.
+NO_PEST_MAX_SCORE = float(os.getenv("NO_PEST_MAX_SCORE", "0.12"))
+NO_PEST_MIN_SIDE = int(os.getenv("NO_PEST_MIN_SIDE", "480"))
+MODEL_VERSION = "rice_pest.onnx"
 
 _session = None
 _session_error: Optional[str] = None
@@ -145,35 +157,42 @@ def _nms(boxes: np.ndarray, scores: np.ndarray) -> list:
     return keep
 
 
-def photo_quality(img: Image.Image) -> Optional[str]:
-    """A short reason when the photo is probably too poor to judge, else None."""
+def photo_metrics(img: Image.Image) -> dict:
+    """Brightness and sharpness (variance of the Laplacian) on a 640 px grey copy."""
     g = img.convert("L")
     g.thumbnail((INPUT_SIZE, INPUT_SIZE))
     a = np.asarray(g, dtype=np.float32)
-    mean = float(a.mean())
-    if mean < DARK_MAX:
-        return "too dark"
-    if mean > BRIGHT_MIN:
-        return "washed out by light"
     lap = a[1:-1, 2:] + a[1:-1, :-2] + a[2:, 1:-1] + a[:-2, 1:-1] - 4 * a[1:-1, 1:-1]
-    if float(lap.var()) < BLUR_MIN:
+    return {"brightness": round(float(a.mean()), 1), "sharpness": round(float(lap.var()), 1)}
+
+
+def photo_quality(img: Image.Image, metrics: Optional[dict] = None) -> Optional[str]:
+    """A short reason when the photo is probably too poor to judge, else None."""
+    m = metrics or photo_metrics(img)
+    if m["brightness"] < DARK_MAX:
+        return "too dark"
+    if m["brightness"] > BRIGHT_MIN:
+        return "washed out by light"
+    if m["sharpness"] < BLUR_MIN:
         return "blurry"
     return None
 
 
 def _run(session, img: Image.Image):
-    """Candidate boxes as (x1, y1, x2, y2) in photo pixels, confidences, classes."""
+    """Candidate boxes as (x1, y1, x2, y2) in photo pixels, confidences,
+    classes, and the highest score of any box of any class (for "no pests")."""
     w, h = img.size
     x, scale, pad_x, pad_y = _letterbox(img)
     out = session.run(None, {session.get_inputs()[0].name: x})[0]
     pred = out[0].T if out.shape[1] == 4 + len(CLASSES) else out[0]  # (N, 4 + classes)
     scores = pred[:, 4:]
+    top = float(scores.max()) if scores.size else 0.0
     cls = scores.argmax(axis=1)
     conf = scores[np.arange(len(cls)), cls]
     keep = conf >= CANDIDATE_CONF
     pred, cls, conf = pred[keep], cls[keep], conf[keep]
     if not len(pred):
-        return np.zeros((0, 4)), np.zeros(0), np.zeros(0, dtype=int)
+        return np.zeros((0, 4)), np.zeros(0), np.zeros(0, dtype=int), top
     cx, cy, bw, bh = pred[:, 0], pred[:, 1], pred[:, 2], pred[:, 3]
     boxes = np.stack([cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2], axis=1)
     boxes = (boxes - np.array([pad_x, pad_y, pad_x, pad_y])) / scale  # undo the letterbox
@@ -183,27 +202,54 @@ def _run(session, img: Image.Image):
         idx = np.where(cls == c)[0]
         kept.extend(idx[k] for k in _nms(boxes[idx], conf[idx]))
     kept = np.array(kept, dtype=int)
-    return boxes[kept], conf[kept], cls[kept]
+    return boxes[kept], conf[kept], cls[kept], top
+
+
+NO_PESTS_MESSAGE = "No pests were found in this photo."
+
+
+def _metadata(img: Image.Image, metrics: dict, quality: Optional[str], top: float, mtop: float,
+              boxes: int) -> dict:
+    """What the decision was based on (saved with the observation)."""
+    return {
+        "model": MODEL_VERSION,
+        "input_size": INPUT_SIZE,
+        "image_width": img.size[0],
+        "image_height": img.size[1],
+        "brightness": metrics["brightness"],
+        "sharpness": metrics["sharpness"],
+        "quality_issue": quality,
+        "max_score": round(top, 4),
+        "max_score_mirrored": round(mtop, 4),
+        "reported_boxes": boxes,
+        "thresholds": {"no_pest_max_score": NO_PEST_MAX_SCORE, "no_pest_min_side": NO_PEST_MIN_SIDE,
+                       "report_conf": REPORT_CONF, "candidate_conf": CANDIDATE_CONF},
+    }
 
 
 def analyze(img: Image.Image) -> dict:
-    """Returns {status, pest, confidence, count, countable, detections, message}.
+    """Returns {status, result, pest, confidence, count, countable, detections,
+    message, metadata}.
     detections: [{"x1","y1","x2","y2" (0-1 of the stored photo), "conf", "pest"}].
+    result: "pests_found" | "no_pests_found" | "uncertain" | "failed".
 
     Prefers "not sure" over a wrong answer: detections must be confident,
     reappear in the mirrored photo and look like single insects, and the pest
-    is only named on solid evidence."""
+    is only named on solid evidence. "no_pests_found" needs a clear photo on
+    which the model saw nothing at all (see NO_PEST_MAX_SCORE)."""
     session = _get_session()
     if session is None:
-        return {"status": "failed", "pest": None, "confidence": None, "count": None,
+        return {"status": "failed", "result": "failed", "pest": None, "confidence": None, "count": None,
                 "countable": False, "detections": [],
-                "message": "Automatic analysis is unavailable. A technician will identify the pest."}
+                "message": "Automatic analysis is unavailable. A technician will identify the pest.",
+                "metadata": {"model": MODEL_VERSION, "error": _session_error}}
 
     w, h = img.size
-    quality = photo_quality(img)
-    boxes, conf, cls = _run(session, img)
+    metrics = photo_metrics(img)
+    quality = photo_quality(img, metrics)
+    boxes, conf, cls, top = _run(session, img)
     # Test-time check: the same insect has to be found again in the mirrored photo.
-    mboxes, mconf, mcls = _run(session, ImageOps.mirror(img))
+    mboxes, mconf, mcls, mtop = _run(session, ImageOps.mirror(img))
     if len(mboxes):
         mboxes = np.stack([w - mboxes[:, 2], mboxes[:, 1], w - mboxes[:, 0], mboxes[:, 3]], axis=1)
 
@@ -238,11 +284,22 @@ def analyze(img: Image.Image) -> dict:
         for b, score, k in detections
     ]
     retake = f"The photo looks {quality}; the technician may ask for a new one." if quality else None
+    meta = _metadata(img, metrics, quality, top, mtop, len(boxes_out))
 
     if not boxes_out:
-        return {"status": "done", "pest": None, "confidence": None, "count": None,
+        clear_nothing = (
+            quality is None
+            and min(w, h) >= NO_PEST_MIN_SIDE
+            and max(top, mtop) < NO_PEST_MAX_SCORE
+        )
+        if clear_nothing:
+            return {"status": "done", "result": "no_pests_found", "pest": None, "confidence": None,
+                    "count": 0, "countable": False, "detections": [], "message": NO_PESTS_MESSAGE,
+                    "metadata": meta}
+        return {"status": "done", "result": "uncertain", "pest": None, "confidence": None, "count": None,
                 "countable": False, "detections": [],
-                "message": retake or "No supported pest was recognized with confidence. A technician will check the photo."}
+                "message": retake or "No supported pest was recognized with confidence. A technician will check the photo.",
+                "metadata": meta}
 
     totals: dict = {}
     for d in boxes_out:
@@ -257,9 +314,10 @@ def analyze(img: Image.Image) -> dict:
         enough = mean_conf >= NAME_MIN_MEAN_CONF or len(mine) >= NAME_MIN_BOXES
     solid = enough and share >= NAME_MIN_SHARE
     if not solid:
-        return {"status": "done", "pest": None, "confidence": round(mean_conf, 3), "count": None,
-                "countable": False, "detections": boxes_out,
-                "message": retake or "Possible pests were found, but not clearly enough to name one. A technician will identify it."}
+        return {"status": "done", "result": "uncertain", "pest": None, "confidence": round(mean_conf, 3),
+                "count": None, "countable": False, "detections": boxes_out,
+                "message": retake or "Possible pests were found, but not clearly enough to name one. A technician will identify it.",
+                "metadata": meta}
 
     arr = np.array([[d["x1"] * w, d["y1"] * h, d["x2"] * w, d["y2"] * h] for d in mine])
     crowded = sum(
@@ -282,10 +340,12 @@ def analyze(img: Image.Image) -> dict:
         message = "The insects are not clear enough to count reliably."
     return {
         "status": "done",
+        "result": "pests_found",
         "pest": pest,
         "confidence": round(mean_conf, 3),
         "count": len(mine) if countable else None,
         "countable": countable,
         "detections": boxes_out,
         "message": message,
+        "metadata": meta,
     }

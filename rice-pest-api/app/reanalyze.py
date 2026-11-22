@@ -6,6 +6,9 @@ computer with the same DATABASE_URL / SUPABASE_* values as the Vercel API):
     python -m app.reanalyze --dry-run  # show what would change
 
 Reviewed observations are never touched: the technician's decision stands.
+A pending photo that now comes out "no pests found" stays pending here (this
+tool never deletes photos or closes observations); its detection result and
+metadata are updated so a technician can decide.
 """
 import io
 import json
@@ -14,7 +17,7 @@ import sys
 from PIL import Image
 from sqlalchemy import text
 
-from . import detector, storage
+from . import detector, schema, storage
 from .database import GeoSessionLocal
 
 
@@ -38,6 +41,12 @@ def main(dry_run: bool) -> None:
                   f"  ({len(ai['detections'])} boxes) {ai['message'] or ''}")
             if dry_run:
                 continue
+            if schema.detection_ready(db):
+                db.execute(
+                    text("UPDATE scans SET detection_result = :r, detection_metadata = CAST(:m AS jsonb) "
+                         "WHERE id = :i AND validation_status = 'pending'"),
+                    {"r": ai.get("result") or "uncertain", "m": json.dumps(ai.get("metadata") or {}), "i": r.id},
+                )
             db.execute(
                 text(
                     """

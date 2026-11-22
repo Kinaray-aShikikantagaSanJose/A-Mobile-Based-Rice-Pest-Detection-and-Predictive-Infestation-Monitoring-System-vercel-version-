@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../app_router.dart';
+import '../l10n/app_language.dart';
 import '../models/record.dart';
 import '../services/sync_service.dart';
 import '../theme.dart';
@@ -80,8 +81,13 @@ class _F21MyRecordsState extends State<F21MyRecords> {
         child: Column(
           children: [
             AppHeader(
-              title: 'My Records',
-              subtitle: records == null ? null : '${plural(records.length, 'observation')} you sent',
+              title: context.tr('My Records'),
+              subtitle: records == null
+                  ? null
+                  : context.tr(
+                      records.length == 1 ? '{n} observation you sent' : '{n} observations you sent',
+                      {'n': records.length},
+                    ),
             ),
             if (records != null && records.isNotEmpty)
               SizedBox(
@@ -94,7 +100,7 @@ class _F21MyRecordsState extends State<F21MyRecords> {
                       Padding(
                         padding: const EdgeInsets.only(right: AppSpacing.sm),
                         child: _FilterChip(
-                          label: _labels[f]!,
+                          label: context.tr(_labels[f]!),
                           count: records.where((r) => _matches(r, f)).length,
                           selected: _filter == f,
                           onTap: () => setState(() => _filter = f),
@@ -120,16 +126,19 @@ class _F21MyRecordsState extends State<F21MyRecords> {
                                     records.isEmpty
                                         ? AppEmptyState(
                                             icon: Icons.photo_library_outlined,
-                                            title: 'Nothing here yet',
-                                            message: 'Observations you send will appear here with their status.',
-                                            actionLabel: 'New Observation',
+                                            title: context.tr('Nothing here yet'),
+                                            message: context.tr('Observations you send will appear here with their status.'),
+                                            actionLabel: context.tr('New Observation'),
                                             onAction: () => context.push(AppRouter.observe),
                                           )
                                         : AppEmptyState(
                                             icon: Icons.filter_alt_off_outlined,
-                                            title: 'No ${_labels[_filter]!.toLowerCase()} records',
-                                            message: 'Try another filter to see your other observations.',
-                                            actionLabel: 'Show all',
+                                            title: context.tr(
+                                              'No {filter} records',
+                                              {'filter': context.tr(_labels[_filter]!).toLowerCase()},
+                                            ),
+                                            message: context.tr('Try another filter to see your other observations.'),
+                                            actionLabel: context.tr('Show all'),
                                             onAction: () => setState(() => _filter = _Filter.all),
                                           ),
                                   ],

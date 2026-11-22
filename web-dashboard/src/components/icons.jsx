@@ -270,6 +270,19 @@ const PATHS = {
       <circle cx="12" cy="13" r="3" />
     </>
   ),
+  // Language picker (Lucide "languages").
+  languages: (
+    <>
+      <path d="m5 8 6 6" />
+      <path d="m4 14 6-6 2-3" />
+      <path d="M2 5h12" />
+      <path d="M7 2h1" />
+      <path d="m22 22-5-10-5 10" />
+      <path d="M14 18h6" />
+    </>
+  ),
+  // Activity logs (Lucide "activity").
+  activity: <path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2" />,
 };
 
 export default function Icon({ name, className = 'h-5 w-5', strokeWidth = 2, title }) {

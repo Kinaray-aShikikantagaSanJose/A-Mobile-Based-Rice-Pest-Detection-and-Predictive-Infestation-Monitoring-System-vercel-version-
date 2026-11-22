@@ -1,7 +1,9 @@
+import { useT } from '../i18n/index.jsx';
 import { fmtNum, quarterLabel } from '../lib.js';
 
 /** Past quarters as bars (validated observations or pests counted); the selected one is highlighted and bars are clickable. */
 export function QuarterBars({ quarters, selected, onSelect, metric = 'records' }) {
+  const t = useT();
   if (!quarters.length) return null;
   const max = Math.max(...quarters.map((q) => q[metric]), 1);
   return (
@@ -14,7 +16,7 @@ export function QuarterBars({ quarters, selected, onSelect, metric = 'records' }
             type="button"
             onClick={() => onSelect(q.quarter)}
             className="group flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-1"
-            title={`${quarterLabel(q.quarter)}: ${q.records} validated observations, ${q.pests} pests counted`}
+            title={t('{quarter}: {records} validated observations, {pests} pests counted', { quarter: quarterLabel(q.quarter), records: q.records, pests: q.pests })}
           >
             <span className={`text-xs font-semibold tabular-nums ${active ? 'text-brand-900' : 'text-ink2'}`}>{fmtNum(q[metric])}</span>
             <span

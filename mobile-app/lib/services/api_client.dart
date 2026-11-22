@@ -46,7 +46,7 @@ class ApiClient {
     final http.Response res;
     try {
       res = await http
-          .post(Uri.parse('$baseUrl$path'), headers: const {'Content-Type': 'application/json'},
+          .post(Uri.parse('$baseUrl$path'), headers: {'Content-Type': 'application/json', ...clientHeaders},
               body: jsonEncode(body))
           .timeout(timeout);
     } catch (e) {
@@ -67,7 +67,8 @@ class ApiClient {
   /// Profile requests work for accounts still waiting for approval too.
   static Future<dynamic> put(String path, [Object? body]) => _send('PUT', path, body: body, allowUnapproved: true);
 
-  static Future<dynamic> delete(String path) => _send('DELETE', path, allowUnapproved: true);
+  static Future<dynamic> delete(String path, {Map<String, String>? query}) =>
+      _send('DELETE', path, query: query, allowUnapproved: true);
 
   /// Downloads an authenticated image and refreshes an expired access token once.
   static Future<Uint8List> downloadImage(String path) async {
@@ -115,9 +116,32 @@ class ApiClient {
     }
   }
 
+  /// Which app sent the request (shown in the dashboard's activity log).
+  static Map<String, String> get clientHeaders => {'X-Palay-Client': kIsWeb ? 'web' : 'mobile'};
+
   /// Headers for requests the app builds itself (e.g. Image.network).
   static Future<Map<String, String>> authHeaders() async =>
-      {'Authorization': 'Bearer ${await _freshAccessToken()}'};
+      {'Authorization': 'Bearer ${await _freshAccessToken()}', ...clientHeaders};
+
+  /// Ends the session on the server so its tokens stop working (sign-out).
+  /// Best effort: never throws and gives up quickly without signal.
+  static Future<void> logout() async {
+    final s = _auth.session;
+    if (s == null) return;
+    try {
+      await http
+          .post(Uri.parse('$baseUrl/auth/logout'),
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ${s.accessToken}',
+                ...clientHeaders,
+              },
+              body: jsonEncode({'refresh_token': s.refreshToken}))
+          .timeout(const Duration(seconds: 6));
+    } catch (e) {
+      debugPrint('[API] logout not sent: $e');
+    }
+  }
 
   /// Current headers without waiting (may hold a token that is about to expire).
   static Map<String, String> get currentHeaders =>
@@ -224,7 +248,7 @@ class ApiClient {
     final http.Response res;
     try {
       res = await http
-          .post(Uri.parse('$baseUrl/auth/refresh'), headers: const {'Content-Type': 'application/json'},
+          .post(Uri.parse('$baseUrl/auth/refresh'), headers: {'Content-Type': 'application/json', ...clientHeaders},
               body: jsonEncode({'refresh_token': s.refreshToken}))
           .timeout(timeout);
     } catch (e) {

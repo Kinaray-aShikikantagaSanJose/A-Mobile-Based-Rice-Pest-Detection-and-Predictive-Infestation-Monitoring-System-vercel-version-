@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import '../app_router.dart';
 import '../services/auth_service.dart';
 import '../controllers/auth_controller.dart';
+import '../l10n/app_language.dart';
 import '../theme.dart';
 import '../widgets/app_widgets.dart';
 import '../widgets/motion.dart';
@@ -224,7 +225,7 @@ class F11bOtpVerificationState extends State<F11bOtpVerification> {
 	}
 
 	void _showMessage(String message) {
-		ScaffoldMessenger.of(context)..hideCurrentSnackBar()..showSnackBar(SnackBar(content: Text(message)));
+		ScaffoldMessenger.of(context)..hideCurrentSnackBar()..showSnackBar(SnackBar(content: Text(context.tr(message))));
 	}
 
 	String _cleanError(Object error) => error.toString().replaceFirst('Exception: ', '');
@@ -246,7 +247,7 @@ class F11bOtpVerificationState extends State<F11bOtpVerification> {
 										...staggered([
 											AppCircleButton(
 												icon: Icons.arrow_back_rounded,
-												tooltip: 'Back',
+												tooltip: context.tr('Back'),
 												onTap: _isVerifying ? null : _goBack,
 											),
 											Padding(
@@ -276,7 +277,7 @@ class F11bOtpVerificationState extends State<F11bOtpVerification> {
 							child: Padding(
 								padding: const EdgeInsets.fromLTRB(AppSpacing.hPad, AppSpacing.md, AppSpacing.hPad, AppSpacing.lg),
 								child: AppPrimaryButton(
-									label: 'Verify',
+									label: context.tr('Verify'),
 									loading: _isVerifying,
 									onPressed: _verify,
 								),
@@ -289,13 +290,16 @@ class F11bOtpVerificationState extends State<F11bOtpVerification> {
 	}
 
 	Widget _buildHeader() {
-		final String target = widget.contact.isNotEmpty ? widget.contact : 'your email';
+		final String target = widget.contact.isNotEmpty ? widget.contact : context.tr('your email');
+		// Split the translated sentence around {email} so the address stays bold.
+		final List<String> sentence =
+				context.tr('Enter the 6-digit code sent to {email} to continue.').split('{email}');
 		return Column(
 			crossAxisAlignment: CrossAxisAlignment.start,
 			children: [
-				const Text(
-					'Verify Your Account',
-					style: TextStyle(
+				Text(
+					context.tr('Verify Your Account'),
+					style: const TextStyle(
 						fontFamily: AppFonts.display,
 						color: AppColors.textPrimary,
 						fontSize: 28,
@@ -308,12 +312,12 @@ class F11bOtpVerificationState extends State<F11bOtpVerification> {
 					TextSpan(
 						style: const TextStyle(color: AppColors.textSecondary, fontSize: 14, height: 1.4),
 						children: [
-							const TextSpan(text: 'Enter the 6-digit code sent to '),
+							TextSpan(text: sentence.first),
 							TextSpan(
 								text: target,
 								style: const TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w600),
 							),
-							const TextSpan(text: ' to continue.'),
+							if (sentence.length > 1) TextSpan(text: sentence.sublist(1).join()),
 						],
 					),
 				),
@@ -376,9 +380,9 @@ class F11bOtpVerificationState extends State<F11bOtpVerification> {
 				alignment: WrapAlignment.center,
 				crossAxisAlignment: WrapCrossAlignment.center,
 				children: [
-					const Text(
-						"Didn't receive the code?",
-						style: TextStyle(color: AppColors.textSecondary, fontSize: 14),
+					Text(
+						context.tr("Didn't receive the code?"),
+						style: const TextStyle(color: AppColors.textSecondary, fontSize: 14),
 					),
 					TextButton(
 						onPressed: canResend ? _resend : null,
@@ -393,10 +397,10 @@ class F11bOtpVerificationState extends State<F11bOtpVerification> {
 							alignment: Alignment.center,
 							child: Text(
 								_isResending
-										? 'Sending...'
+										? context.tr('Sending...')
 										: _secondsRemaining > 0
-												? 'Resend in $minutes:$seconds'
-												: 'Resend code',
+												? context.tr('Resend in {time}', {'time': '$minutes:$seconds'})
+												: context.tr('Resend code'),
 								key: ValueKey(
 									_isResending ? 'sending' : (_secondsRemaining > 0 ? 'countdown' : 'ready'),
 								),

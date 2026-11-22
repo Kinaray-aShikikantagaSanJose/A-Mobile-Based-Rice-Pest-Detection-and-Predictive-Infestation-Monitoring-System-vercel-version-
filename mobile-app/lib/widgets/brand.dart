@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../l10n/app_language.dart';
 import '../theme.dart';
 
 /// Palay Patrol brand: name, tagline and logo widgets.
@@ -24,7 +25,7 @@ class PalayPatrolLogo extends StatelessWidget {
       width: width,
       fit: BoxFit.contain,
       filterQuality: FilterQuality.high,
-      semanticLabel: '$kAppName logo',
+      semanticLabel: context.tr('{app} logo', {'app': kAppName}),
       errorBuilder: (context, error, stack) => SizedBox(
         width: width,
         height: width * 0.8,

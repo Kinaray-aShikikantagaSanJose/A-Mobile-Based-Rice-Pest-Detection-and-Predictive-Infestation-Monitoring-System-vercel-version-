@@ -98,14 +98,24 @@ def get(bucket: str, key: Optional[str]) -> Optional[bytes]:
         return f.read()
 
 
-def delete(bucket: str, key: Optional[str]) -> None:
-    """Removes the file; never raises (a leftover file is harmless)."""
+def delete(bucket: str, key: Optional[str]) -> bool:
+    """Removes the file; never raises (a leftover file is harmless). True when
+    the file is gone afterwards (also when it was already missing)."""
     if not key or not _check(bucket, key):
-        return
+        return False
     try:
         if using_supabase():
             _request("DELETE", bucket, key)
         else:
             os.remove(os.path.join(_LOCAL_DIRS[bucket], key))
+        return True
+    except urllib.error.HTTPError as e:
+        if e.code in (400, 404):  # Supabase answers 400/404 for a missing object
+            return True
+        log.warning("Could not delete %s/%s: HTTP %s", bucket, key, e.code)
+        return False
+    except FileNotFoundError:
+        return True
     except Exception as e:
         log.warning("Could not delete %s/%s: %s", bucket, key, e)
+        return False

@@ -5,7 +5,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'app_router.dart';
 import 'controllers/auth_controller.dart';
+import 'l10n/app_language.dart';
 import 'platform/local_files.dart';
+import 'services/api_client.dart';
 import 'services/notification_service.dart';
 import 'services/sync_service.dart';
 import 'utils/api_config.dart';
@@ -38,6 +40,20 @@ void main() async {
     DeviceOrientation.portraitDown,
   ]);
 
+  // Language picked on this phone (English, Filipino or Kinaray-a); works
+  // offline and before signing in. A new choice is also saved on the account
+  // (best effort), so notifications from the server use it too.
+  await AppLanguage.instance.load();
+  AppLanguage.instance.onPicked = (lang) {
+    if (!AuthControllerImpl.instance.isLoggedIn) return;
+    ApiClient.put('/auth/me', {'preferred_language': lang.name})
+        .then(ApiClient.applyProfile)
+        .catchError((Object e) {
+      debugPrint('[Lang] not saved on the account yet: $e');
+      return null;
+    });
+  };
+
   // 1. Grab the singleton instance
   final auth = AuthControllerImpl.instance;
 
@@ -65,11 +81,15 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp.router(
-      debugShowCheckedModeBanner: false,
-      title: 'Palay Patrol',
-      theme: buildAppTheme(),
-      routerConfig: _appRouter.router,
+    // LanguageScope rebuilds every screen that uses context.tr when the
+    // language changes.
+    return LanguageScope(
+      child: MaterialApp.router(
+        debugShowCheckedModeBanner: false,
+        title: 'Palay Patrol',
+        theme: buildAppTheme(),
+        routerConfig: _appRouter.router,
+      ),
     );
   }
 }

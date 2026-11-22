@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../app_router.dart';
+import '../l10n/app_language.dart';
 import '../models/record.dart';
 import '../services/api_client.dart';
 import '../services/sync_service.dart';
@@ -83,7 +84,7 @@ class _F25NotificationsState extends State<F25Notifications> {
       await _load();
     } on ApiException catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(context.tr(e.message))));
       }
     }
   }
@@ -114,14 +115,14 @@ class _F25NotificationsState extends State<F25Notifications> {
         child: Column(
           children: [
             AppHeader(
-              title: 'Notifications',
-              subtitle: unread > 0 ? '$unread unread' : null,
+              title: context.tr('Notifications'),
+              subtitle: unread > 0 ? context.tr('{n} unread', {'n': unread}) : null,
               actions: [
                 if (unread > 0)
                   TextButton.icon(
                     onPressed: _markAll,
                     icon: const Icon(Icons.done_all_rounded, size: 18),
-                    label: const Text('Mark all read', style: TextStyle(fontWeight: FontWeight.w700)),
+                    label: Text(context.tr('Mark all read'), style: const TextStyle(fontWeight: FontWeight.w700)),
                   ),
               ],
             ),
@@ -135,8 +136,8 @@ class _F25NotificationsState extends State<F25Notifications> {
                       InfoBanner(
                         icon: _offline ? Icons.cloud_off_rounded : Icons.error_outline_rounded,
                         color: _offline ? AppColors.textSecondary : AppColors.danger,
-                        message: _error!,
-                        actionLabel: 'Retry',
+                        message: context.tr(_error!),
+                        actionLabel: context.tr('Retry'),
                         onAction: _load,
                       ),
                       const SizedBox(height: AppSpacing.md),
@@ -147,21 +148,27 @@ class _F25NotificationsState extends State<F25Notifications> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Row(
+                            Row(
                               children: [
-                                IconTile(icon: Icons.alarm_rounded, size: 38),
-                                SizedBox(width: AppSpacing.md),
+                                const IconTile(icon: Icons.alarm_rounded, size: 38),
+                                const SizedBox(width: AppSpacing.md),
                                 Expanded(
-                                  child: Text('How is the field now?', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+                                  child: Text(context.tr('How is the field now?'),
+                                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
                                 ),
                               ],
                             ),
                             const SizedBox(height: AppSpacing.sm),
-                            Text('You applied "${t.treatment}" on ${formatShortDate(t.appliedAt)} for ${rec.title}.',
+                            Text(
+                                context.tr('You applied "{treatment}" on {date} for {title}.', {
+                                  'treatment': t.treatment,
+                                  'date': formatShortDate(t.appliedAt),
+                                  'title': rec.title,
+                                }),
                                 style: const TextStyle(height: 1.4)),
                             const SizedBox(height: AppSpacing.md),
                             AppPrimaryButton(
-                              label: 'Check the field',
+                              label: context.tr('Check the field'),
                               icon: Icons.photo_camera_rounded,
                               compact: true,
                               onPressed: () => context.push(
@@ -177,10 +184,10 @@ class _F25NotificationsState extends State<F25Notifications> {
                     if (items == null && _error == null)
                       const SkeletonList(rows: 4)
                     else if ((items ?? const []).isEmpty && _followUps.isEmpty)
-                      const AppEmptyState(
+                      AppEmptyState(
                         icon: Icons.notifications_none_rounded,
-                        title: 'You\'re all caught up',
-                        message: 'You will be told here when a technician reviews your observations.',
+                        title: context.tr('You\'re all caught up'),
+                        message: context.tr('You will be told here when a technician reviews your observations.'),
                       )
                     else
                       for (final (i, n) in (items ?? const <AppNotification>[]).indexed) ...[

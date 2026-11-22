@@ -1,21 +1,22 @@
 import csv
 import io
+import json
 import re
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import List, Literal, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from . import avatars, insights, land, levels, observations as obs, schema
-from .access import AGRICULTURIST, STAFF, TECHNICIAN, account_is_active, require_viewer
+from . import activity, avatars, i18n, insights, land, levels, observations as obs, schema
+from .access import AGRICULTURIST, STAFF, TECHNICIAN, account_is_active, has_permission, require_viewer
 from .database import get_db, get_geo_db, local_today
 from .email_service import send_plain_email
 from .models import OTPRecord, User
 from .schemas import RegisterSchema, check_password_bytes, clean_phone
-from .security import hash_password
+from .security import REFRESH_TOKEN_EXPIRE_DAYS, hash_password
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 ROLES = ("farmer", "technician", "agriculturist")
@@ -39,6 +40,10 @@ def me(db: Session = Depends(get_db), viewer: dict = Depends(require_viewer(*STA
         "id": user.id if user else None,
         "avatar_url": avatars.url_for(user.id, avatars.filename_of(db, user.id)) if user else None,
         "area_label": insights.area_label(viewer),
+        "preferred_language": viewer.get("language", "en"),
+        # What this account may do on the dashboard (role_permissions).
+        "can_delete_records": has_permission(db, viewer["role"], "records.delete"),
+        "can_view_activity": has_permission(db, viewer["role"], "activity_logs.view"),
     }
 
 
@@ -168,6 +173,8 @@ def create_library_entry(
         ),
         _library_params(payload, viewer),
     ).first()
+    activity.log(db, "library_changed", target_type="library", target_id=row.id,
+                 details={"action": "created", "title": row.title})
     db.commit()
     return _library_row(row)
 
@@ -194,6 +201,8 @@ def update_library_entry(
     ).first()
     if row is None:
         raise HTTPException(status_code=404, detail="Recommendation not found.")
+    activity.log(db, "library_changed", target_type="library", target_id=entry_id,
+                 details={"action": "updated", "title": row.title})
     db.commit()
     return _library_row(row)
 
@@ -222,6 +231,8 @@ def set_library_status(
     ).first()
     if row is None:
         raise HTTPException(status_code=404, detail="Recommendation not found.")
+    activity.log(db, "library_changed", target_type="library", target_id=entry_id,
+                 details={"action": payload.status, "title": row.title})
     db.commit()
     return _library_row(row)
 
@@ -235,6 +246,7 @@ def delete_library_entry(
     result = db.execute(text("DELETE FROM treatment_library WHERE id = :i"), {"i": entry_id})
     if result.rowcount == 0:
         raise HTTPException(status_code=404, detail="Recommendation not found.")
+    activity.log(db, "library_changed", target_type="library", target_id=entry_id, details={"action": "deleted"})
     db.commit()
     return {"message": "Recommendation deleted.", "id": entry_id}
 
@@ -293,6 +305,9 @@ def save_criteria(
         {"p": payload.pest, "s": payload.crop_stage, "mf": payload.medium_from,
          "hf": payload.high_from, "by": viewer["email"]},
     )
+    activity.log(db, "criteria_changed", target_type="criteria", target_id=payload.pest,
+                 details={"action": "saved", "crop_stage": payload.crop_stage,
+                          "medium_from": payload.medium_from, "high_from": payload.high_from})
     db.commit()
     return levels.load_thresholds(db)[(payload.pest, payload.crop_stage)]
 
@@ -308,6 +323,8 @@ def delete_criteria(
     )
     if result.rowcount == 0:
         raise HTTPException(status_code=400, detail="The any-stage thresholds can be edited but not removed.")
+    activity.log(db, "criteria_changed", target_type="criteria", target_id=criteria_id,
+                 details={"action": "deleted"})
     db.commit()
     return {"message": "Stage thresholds removed.", "id": criteria_id}
 
@@ -468,10 +485,12 @@ class UserCreate(RegisterSchema):
         return _clean_coverage(v)
 
 
-def _tell(geo: Session, email: str, title: str, body: str) -> None:
-    """In-app notification about an account change (best effort)."""
+def _tell_changed(geo: Session, email: str, changed: list) -> None:
+    """In-app notification about an account change, in the person's language (best effort)."""
     try:
-        obs.notify(geo, email, None, "account", title, body)
+        lang = i18n.language_of(geo, email)
+        fields = ", ".join(i18n.render(f"field.{c}", lang) for c in changed)
+        obs.notify_t(geo, email, None, "account", "account.updated.title", "account.updated.body", fields=fields)
         geo.commit()
     except Exception:
         geo.rollback()
@@ -510,6 +529,8 @@ def create_user(
     db.add(user)
     db.commit()
     db.refresh(user)
+    activity.log(db, "user_created", target_type="user", target_id=user.id,
+                 details={"email": user.email, "role": user.role, "municipality": user.region}, commit=True)
     try:  # best effort; the agriculturist gives the password in person
         send_plain_email(
             user.email,
@@ -566,14 +587,12 @@ def update_user(
     if payload.new_password:
         user.password_hash = hash_password(payload.new_password)
         changed.append("password")
+    if changed or payload.status is not None:
+        activity.log(db, "user_updated", target_type="user", target_id=user.id,
+                     details={"email": user.email, "changed": changed, "status": user.status})
     db.commit()
     if changed and not is_self:
-        _tell(
-            geo,
-            user.email,
-            "Your account details were updated",
-            f"An agriculturist updated your {', '.join(changed)}. Pull down on Home to see the changes.",
-        )
+        _tell_changed(geo, user.email, changed)
     if newly_approved:
         try:  # best effort; the app also shows the new status on its next check
             send_plain_email(
@@ -601,6 +620,9 @@ def delete_user(
         raise HTTPException(status_code=400, detail="You can't delete your own account.")
     filename = avatars.filename_of(db, user.id)
     email = user.email
+    activity.end_all_sessions(db, email, "account_deleted")
+    activity.log(db, "user_deleted", target_type="user", target_id=user.id,
+                 details={"email": email, "role": user.role})
     db.query(OTPRecord).filter(OTPRecord.email == email).delete()
     db.delete(user)
     db.commit()
@@ -678,6 +700,9 @@ def report(
     viewer: dict = Depends(require_viewer(AGRICULTURIST)),
 ):
     today = local_today().isoformat()
+    activity.log(db, "report_exported", target_type="report", target_id=kind,
+                 details={"start": start, "end": end, "month": month, "quarter": quarter,
+                          "municipality": municipality, "land_type": land_type}, commit=True)
     if kind == "records":
         rows = insights.filter_scans(
             insights.load_scans(db, viewer, start=insights.parse_day(start), end=insights.parse_day(end)),
@@ -780,7 +805,8 @@ def update_treatment(
     if row is None or not obs.in_scope(viewer, row.area, row.brgy):
         raise HTTPException(status_code=404, detail="Treatment not found.")
     notify_farmer = row.user_email != viewer["email"]
-    who = "Your technician" if viewer["role"] == TECHNICIAN else "Your agriculturist"
+    lang = i18n.language_of(db, row.user_email)
+    who = i18n.render("who.technician" if viewer["role"] == TECHNICIAN else "who.agriculturist", lang)
 
     if payload.reset_follow_up or payload.follow_up_due is not None:
         if row.has_follow_up:
@@ -794,8 +820,8 @@ def update_treatment(
             {"d": due, "by": None if payload.reset_follow_up else viewer["email"], "i": treatment_id},
         )
         if notify_farmer and due != row.follow_up_due:
-            obs.notify(db, row.user_email, None, "follow_up", "Follow-up date changed",
-                       f'{who} asks you to check the field after "{row.treatment}" on {_nice_day(due)}.')
+            obs.notify_t(db, row.user_email, None, "follow_up", "follow_up.title", "follow_up.body",
+                         who=who, treatment=row.treatment, date=_nice_day(due))
 
     if payload.recommend_again is not None:
         if payload.recommend_again and row.library_id is None:
@@ -807,10 +833,245 @@ def update_treatment(
              "i": treatment_id},
         )
         if notify_farmer and payload.recommend_again:
-            obs.notify(db, row.user_email, None, "guidance", "Treatment recommended again",
-                       f'{who} put "{row.treatment}" back in your treatment options.')
+            obs.notify_t(db, row.user_email, None, "guidance", "recommend_again.title", "recommend_again.body",
+                         who=who, treatment=row.treatment)
+    activity.log(db, "treatment_updated", target_type="treatment", target_id=treatment_id,
+                 details={"follow_up_due": str(payload.follow_up_due) if payload.follow_up_due else None,
+                          "reset_follow_up": payload.reset_follow_up, "recommend_again": payload.recommend_again})
     db.commit()
     item = next((i for i in insights.treatment_followups(db, viewer)["items"] if i["id"] == treatment_id), None)
     if item is None:
         raise HTTPException(status_code=404, detail="Treatment not found.")
     return item
+
+
+# ---------------------------------------------------------------- activity logs
+
+SESSION_STATUSES = ("active", "ended", "expired")
+ROLE_FILTERS = ("farmer", "technician", "agriculturist")
+
+
+def _require_activity(db: Session, viewer: dict) -> None:
+    if not has_permission(db, viewer["role"], "activity_logs.view"):
+        raise HTTPException(status_code=403, detail="Your account doesn't have access to this.")
+    if not schema.activity_ready(db):
+        raise HTTPException(
+            status_code=503,
+            detail="Activity logs need a database update first (supabase/01_schema.sql, section 2026-11).",
+        )
+
+
+# A session counts as expired once it has not been used for longer than the
+# refresh token lasts (the app can no longer renew it).
+_SESSION_STATUS_SQL = (
+    "CASE WHEN s.id IS NULL THEN NULL WHEN s.ended_at IS NOT NULL THEN 'ended' "
+    "WHEN s.last_seen_at < now() - make_interval(days => :life) THEN 'expired' ELSE 'active' END"
+)
+
+
+def _activity_where(params: dict, q: str, email: str, role: str, action: str, outcome: str,
+                    session_status: str, start: str, end: str, log_alias: str = "l") -> str:
+    """WHERE clause for the activity log (alias l, sessions joined as s) or,
+    with log_alias="s", for the sessions list itself."""
+    clauses = []
+    name = "COALESCE(NULLIF(l.user_name, ''), u.full_name, '')" if log_alias == "l" else "COALESCE(u.full_name, '')"
+    if q.strip():
+        params["q"] = f"%{q.strip().lower()}%"
+        clauses.append(f"(lower({log_alias}.user_email) LIKE :q OR lower({name}) LIKE :q)")
+    if email.strip():
+        params["email"] = email.strip().lower()
+        clauses.append(f"lower({log_alias}.user_email) = :email")
+    if role in ROLE_FILTERS:
+        params["role"] = role
+        clauses.append(f"{log_alias}.user_role = :role")
+    elif role == "none":
+        clauses.append(f"{log_alias}.user_role = ''")
+    if action and log_alias == "l":
+        params["action"] = action
+        clauses.append("l.action_type = :action")
+    if outcome in ("success", "failure") and log_alias == "l":
+        params["outcome"] = outcome
+        clauses.append("l.outcome = :outcome")
+    if session_status in SESSION_STATUSES:
+        params["sstatus"] = session_status
+        clauses.append(f"({_SESSION_STATUS_SQL}) = :sstatus")
+    elif session_status == "none" and log_alias == "l":
+        clauses.append("l.session_id IS NULL")
+    day_col = f"{log_alias}.created_at" if log_alias == "l" else "s.started_at"
+    first, last = insights.parse_day(start), insights.parse_day(end)
+    if first:
+        params["start"] = first
+        clauses.append(f"{day_col} >= :start")
+    if last:
+        params["end"] = last + timedelta(days=1)
+        clauses.append(f"{day_col} < :end")
+    return ("WHERE " + " AND ".join(clauses)) if clauses else ""
+
+
+def _activity_rows(db: Session, q: str, email: str, role: str, action: str, outcome: str,
+                   session_status: str, start: str, end: str, limit: int, offset: int):
+    params: dict = {"life": REFRESH_TOKEN_EXPIRE_DAYS, "limit": limit, "offset": offset}
+    where = _activity_where(params, q, email, role, action, outcome, session_status, start, end)
+    base = f"""
+        FROM user_activity_logs l
+        LEFT JOIN user_sessions s ON s.id = l.session_id
+        LEFT JOIN users u ON u.email = l.user_email
+        {where}
+    """
+    total = db.execute(text(f"SELECT COUNT(*) {base}"), params).scalar()
+    rows = db.execute(
+        text(
+            f"""
+            SELECT l.id, l.created_at, l.user_email,
+                   COALESCE(NULLIF(l.user_name, ''), u.full_name, '') AS user_name,
+                   l.user_role, l.action_type, l.target_type, l.target_id, l.outcome, l.client,
+                   l.ip_address, l.user_agent, l.details, CAST(l.session_id AS text) AS session_id,
+                   s.started_at AS session_started, s.last_seen_at AS session_last_seen,
+                   s.ended_at AS session_ended, s.end_reason, {_SESSION_STATUS_SQL} AS session_status
+            {base}
+            ORDER BY l.created_at DESC, l.id DESC
+            LIMIT :limit OFFSET :offset
+            """
+        ),
+        params,
+    ).fetchall()
+    return total, rows
+
+
+def _activity_item(r) -> dict:
+    return {
+        "id": r.id,
+        "created_at": _iso(r.created_at),
+        "user_email": r.user_email,
+        "user_name": r.user_name,
+        "user_role": r.user_role,
+        "action": r.action_type,
+        "target_type": r.target_type,
+        "target_id": r.target_id,
+        "outcome": r.outcome,
+        "client": r.client,
+        "ip_address": r.ip_address,
+        "user_agent": r.user_agent,
+        "details": r.details or {},
+        "session_id": r.session_id,
+        "session_status": r.session_status,
+        "session_started": _iso(r.session_started),
+        "session_last_seen": _iso(r.session_last_seen),
+        "session_ended": _iso(r.session_ended),
+        "session_end_reason": r.end_reason,
+    }
+
+
+@router.get("/activity")
+def activity_logs(
+    q: str = Query("", max_length=200),
+    email: str = Query("", max_length=255),
+    role: str = "",
+    action: str = Query("", max_length=40),
+    outcome: str = "",
+    session_status: str = "",
+    start: str = "",
+    end: str = "",
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_geo_db),
+    viewer: dict = Depends(require_viewer(AGRICULTURIST)),
+):
+    """Sign-ins, sign-outs and important actions, newest first. Filters: a
+    person (q = name/email search, or exact email), role ("none" = no
+    account), action type, outcome, session status (active / ended /
+    expired / none) and a date range (local days, inclusive)."""
+    _require_activity(db, viewer)
+    total, rows = _activity_rows(db, q, email, role, action, outcome, session_status, start, end, limit, offset)
+    counts = db.execute(
+        text("SELECT action_type, COUNT(*) AS n FROM user_activity_logs GROUP BY 1 ORDER BY 1")
+    ).fetchall()
+    return {
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "items": [_activity_item(r) for r in rows],
+        "facets": {
+            "actions": sorted(set(activity.ACTIONS) | {c.action_type for c in counts}),
+            "action_counts": {c.action_type: c.n for c in counts},
+            "roles": list(ROLE_FILTERS),
+            "session_statuses": list(SESSION_STATUSES),
+        },
+        "session_lifetime_days": REFRESH_TOKEN_EXPIRE_DAYS,
+    }
+
+
+@router.get("/activity/sessions")
+def activity_sessions(
+    q: str = Query("", max_length=200),
+    email: str = Query("", max_length=255),
+    role: str = "",
+    session_status: str = "",
+    start: str = "",
+    end: str = "",
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_geo_db),
+    viewer: dict = Depends(require_viewer(AGRICULTURIST)),
+):
+    """Sign-in sessions (one per sign-in), newest first, with their status."""
+    _require_activity(db, viewer)
+    params: dict = {"life": REFRESH_TOKEN_EXPIRE_DAYS, "limit": limit, "offset": offset}
+    where = _activity_where(params, q, email, role, "", "", session_status, start, end, log_alias="s")
+    base = f"FROM user_sessions s LEFT JOIN users u ON u.email = s.user_email {where}"
+    total = db.execute(text(f"SELECT COUNT(*) {base}"), params).scalar()
+    rows = db.execute(
+        text(
+            f"""
+            SELECT CAST(s.id AS text) AS id, s.user_email, COALESCE(u.full_name, '') AS user_name, s.user_role,
+                   s.client, s.ip_address, s.user_agent, s.started_at, s.last_seen_at, s.ended_at,
+                   s.end_reason, s.request_count, {_SESSION_STATUS_SQL} AS status,
+                   (SELECT COUNT(*) FROM user_activity_logs l WHERE l.session_id = s.id) AS actions
+            {base}
+            ORDER BY s.started_at DESC
+            LIMIT :limit OFFSET :offset
+            """
+        ),
+        params,
+    ).fetchall()
+    return {
+        "total": total,
+        "items": [
+            {"id": r.id, "user_email": r.user_email, "user_name": r.user_name, "user_role": r.user_role,
+             "client": r.client, "ip_address": r.ip_address, "user_agent": r.user_agent,
+             "started_at": _iso(r.started_at), "last_seen_at": _iso(r.last_seen_at),
+             "ended_at": _iso(r.ended_at), "end_reason": r.end_reason, "requests": r.request_count,
+             "status": r.status, "actions": r.actions}
+            for r in rows
+        ],
+        "session_lifetime_days": REFRESH_TOKEN_EXPIRE_DAYS,
+    }
+
+
+@router.get("/activity/export")
+def activity_export(
+    q: str = Query("", max_length=200),
+    email: str = Query("", max_length=255),
+    role: str = "",
+    action: str = Query("", max_length=40),
+    outcome: str = "",
+    session_status: str = "",
+    start: str = "",
+    end: str = "",
+    db: Session = Depends(get_geo_db),
+    viewer: dict = Depends(require_viewer(AGRICULTURIST)),
+):
+    """The filtered activity log as CSV (at most 10 000 rows)."""
+    _require_activity(db, viewer)
+    _, rows = _activity_rows(db, q, email, role, action, outcome, session_status, start, end, 10000, 0)
+    activity.log(db, "report_exported", target_type="report", target_id="activity",
+                 details={"rows": len(rows), "role": role, "action": action, "session_status": session_status,
+                          "start": start, "end": end}, commit=True)
+    return _csv(
+        f"activity-log-{local_today().isoformat()}.csv",
+        ["Time", "Name", "Email", "Role", "Action", "Outcome", "Target", "App", "IP address",
+         "Session status", "Session started", "Details"],
+        [[_iso(r.created_at), r.user_name, r.user_email, r.user_role, r.action_type, r.outcome,
+          f"{r.target_type} {r.target_id}".strip(), r.client, r.ip_address, _n(r.session_status),
+          _n(_iso(r.session_started)), json.dumps(r.details or {}, ensure_ascii=False)] for r in rows],
+    )

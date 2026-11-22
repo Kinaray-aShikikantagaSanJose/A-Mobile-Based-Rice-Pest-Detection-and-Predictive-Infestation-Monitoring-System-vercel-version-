@@ -1,4 +1,5 @@
 import { Component } from 'react';
+import { translate as t } from '../i18n/index.jsx';
 import Icon from './icons.jsx';
 
 /**
@@ -32,12 +33,12 @@ export default class ErrorBoundary extends Component {
         <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-red-50 text-red-600">
           <Icon name="alert" className="h-6 w-6" />
         </span>
-        <h2 className="mt-4 text-lg font-bold text-ink">This page ran into a problem</h2>
+        <h2 className="mt-4 text-lg font-bold text-ink">{t('This page ran into a problem')}</h2>
         <p className="mt-1 text-sm text-ink2">
-          The rest of the dashboard still works. Try loading the page again; if it keeps happening, reload the browser tab.
+          {t('The rest of the dashboard still works. Try loading the page again; if it keeps happening, reload the browser tab.')}
         </p>
         <details className="mt-4 text-left text-xs text-muted">
-          <summary className="cursor-pointer select-none text-ink2">Technical details</summary>
+          <summary className="cursor-pointer select-none text-ink2">{t('Technical details')}</summary>
           <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded-lg bg-canvas p-3">{String(error?.message || error)}</pre>
         </details>
         <div className="mt-5 flex justify-center gap-2">
@@ -47,14 +48,14 @@ export default class ErrorBoundary extends Component {
             className="inline-flex items-center gap-2 rounded-lg bg-brand-700 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-800"
           >
             <Icon name="refresh" className="h-4 w-4" />
-            Try again
+            {t('Try again')}
           </button>
           <button
             type="button"
             onClick={() => window.location.reload()}
             className="rounded-lg border border-line bg-white px-4 py-2 text-sm font-semibold text-ink hover:bg-canvas"
           >
-            Reload tab
+            {t('Reload tab')}
           </button>
         </div>
       </div>

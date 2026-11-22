@@ -24,6 +24,7 @@ class OutboxObservation {
   final int? resubmissionOf; // server id of the returned observation this retakes
   final String landType; // upland | rainfed_lowland | irrigated_lowland
   final double? elevationM; // looked up for the land type suggestion, if any
+  final double? gpsAccuracyM; // the phone's GPS accuracy (metres) for lat/lng
   final String createdAt; // ISO 8601 with offset
   final String lastError;
 
@@ -44,6 +45,7 @@ class OutboxObservation {
     this.resubmissionOf,
     this.landType = '',
     this.elevationM,
+    this.gpsAccuracyM,
     required this.createdAt,
     this.lastError = '',
   });
@@ -67,6 +69,7 @@ class OutboxObservation {
         'resubmission_of': resubmissionOf,
         'land_type': landType,
         'elevation_m': elevationM,
+        'gps_accuracy_m': gpsAccuracyM,
         'created_at': createdAt,
         'last_error': lastError,
       };
@@ -88,6 +91,7 @@ class OutboxObservation {
         resubmissionOf: m['resubmission_of'] as int?,
         landType: m['land_type'] as String? ?? '',
         elevationM: (m['elevation_m'] as num?)?.toDouble(),
+        gpsAccuracyM: (m['gps_accuracy_m'] as num?)?.toDouble(),
         createdAt: m['created_at'] as String,
         lastError: m['last_error'] as String? ?? '',
       );
@@ -141,7 +145,7 @@ class LocalStore {
   LocalStore._();
   static final LocalStore instance = LocalStore._();
 
-  static const int _version = 12;
+  static const int _version = 13;
   Database? _db;
 
   Future<Database> _open() async {
@@ -173,6 +177,10 @@ class LocalStore {
           await db.execute("ALTER TABLE outbox ADD COLUMN land_type TEXT NOT NULL DEFAULT ''");
           await db.execute('ALTER TABLE outbox ADD COLUMN elevation_m REAL');
         }
+        // v13: GPS accuracy of the observation's location.
+        if (oldVersion < 13) {
+          await db.execute('ALTER TABLE outbox ADD COLUMN gps_accuracy_m REAL');
+        }
       },
     );
     return _db!;
@@ -197,6 +205,7 @@ class LocalStore {
         resubmission_of INTEGER,
         land_type TEXT NOT NULL DEFAULT '',
         elevation_m REAL,
+        gps_accuracy_m REAL,
         created_at TEXT NOT NULL,
         last_error TEXT NOT NULL DEFAULT ''
       )''');
@@ -335,6 +344,34 @@ class LocalStore {
             {'server_id': r['id'], 'client_uuid': r['client_uuid'], 'json': jsonEncode(r)});
       }
     });
+  }
+
+  /// Drops a record that was deleted on the server (by a technician or an
+  /// agriculturist), with the copy of its photo downloaded from the server.
+  /// A photo taken on this phone is kept.
+  Future<void> removeRecord(int serverId) async {
+    final db = await _open();
+    final rows = await db.query('records', columns: ['client_uuid'], where: 'server_id = ?', whereArgs: [serverId]);
+    final uuid = rows.isEmpty ? null : rows.first['client_uuid'] as String?;
+    String? serverPhoto;
+    await db.transaction((txn) async {
+      await txn.delete('records', where: 'server_id = ?', whereArgs: [serverId]);
+      if (uuid != null) {
+        final photo = await txn.query('photos', where: 'client_uuid = ?', whereArgs: [uuid]);
+        final path = photo.isEmpty ? null : photo.first['image_path'] as String?;
+        if (path != null && path.contains('server_photos')) {
+          serverPhoto = path;
+          await txn.delete('photos', where: 'client_uuid = ?', whereArgs: [uuid]);
+        }
+      }
+    });
+    if (serverPhoto != null) {
+      try {
+        await deleteLocalFile(serverPhoto!);
+      } catch (e) {
+        debugPrint('Could not delete photo: $e');
+      }
+    }
   }
 
   Future<List<Map<String, dynamic>>> cachedRecords() async {

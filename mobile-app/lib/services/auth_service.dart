@@ -1,4 +1,5 @@
 import '../controllers/auth_controller.dart';
+import '../l10n/app_language.dart';
 import 'api_client.dart';
 
 class AuthException implements Exception {
@@ -40,6 +41,8 @@ class AuthService {
     required String municipality,
     required String barangay,
     String role = 'farmer',
+    String? barangayPsgc,
+    String locationSource = 'manual',
   }) {
     return _post('/auth/register', {
       'full_name': fullName.trim(),
@@ -49,7 +52,19 @@ class AuthService {
       'municipality': municipality,
       'barangay': barangay.trim(),
       'role': role,
+      // Official code of the barangay when picked from the list or found by GPS.
+      'barangay_psgc': ?barangayPsgc,
+      'location_source': locationSource,
+      // The language chosen in the app, kept on the account.
+      'preferred_language': AppLanguage.instance.code,
     });
+  }
+
+  /// Signs out: the server ends the session (best effort, works offline),
+  /// then the phone forgets it.
+  Future<void> signOut() async {
+    await ApiClient.logout();
+    AuthControllerImpl.instance.logout();
   }
 
   Future<Map<String, dynamic>> verifyOtp({required String email, required String code}) {

@@ -4,12 +4,14 @@ import 'package:go_router/go_router.dart';
 
 import '../app_router.dart';
 import '../controllers/auth_controller.dart';
+import '../l10n/app_language.dart';
 import '../models/record.dart';
 import '../services/api_client.dart';
 import '../services/sync_service.dart';
 import '../theme.dart';
 import '../utils/formatters.dart';
 import '../widgets/account_sheet.dart';
+import '../widgets/language_button.dart';
 import '../widgets/app_widgets.dart';
 import '../widgets/motion.dart';
 import '../widgets/shell_scope.dart';
@@ -101,7 +103,7 @@ class _F20HomeState extends State<F20Home> {
     if (_records.any((r) => !r.uploaded)) {
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
-        ..showSnackBar(const SnackBar(content: Text('Still no signal. They will be sent automatically.')));
+        ..showSnackBar(SnackBar(content: Text(context.tr('Still no signal. They will be sent automatically.'))));
     }
   }
 
@@ -137,8 +139,13 @@ class _F20HomeState extends State<F20Home> {
                             padding: const EdgeInsets.only(bottom: AppSpacing.lg),
                             child: InfoBanner(
                               icon: Icons.cloud_upload_outlined,
-                              message: '${plural(waiting, 'observation')} saved on this phone, waiting for signal.',
-                              actionLabel: 'Send now',
+                              message: context.tr(
+                                waiting == 1
+                                    ? '{n} observation saved on this phone, waiting for signal.'
+                                    : '{n} observations saved on this phone, waiting for signal.',
+                                {'n': waiting},
+                              ),
+                              actionLabel: context.tr('Send now'),
                               busy: _sending,
                               onAction: _sendNow,
                             ),
@@ -160,8 +167,8 @@ class _F20HomeState extends State<F20Home> {
                                 child: _Shortcut(
                                   icon: Icons.map_rounded,
                                   color: AppColors.sky,
-                                  title: 'Local map',
-                                  subtitle: 'Reports near you',
+                                  title: context.tr('Local map'),
+                                  subtitle: context.tr('Reports near you'),
                                   onTap: () => _openTab(AppTab.map, AppRouter.map),
                                 ),
                               ),
@@ -170,8 +177,8 @@ class _F20HomeState extends State<F20Home> {
                                 child: _Shortcut(
                                   icon: Icons.healing_rounded,
                                   color: AppColors.purple,
-                                  title: 'Treatments',
-                                  subtitle: 'Options & follow-ups',
+                                  title: context.tr('Treatments'),
+                                  subtitle: context.tr('Options & follow-ups'),
                                   onTap: () => context.push(AppRouter.treatments),
                                 ),
                               ),
@@ -182,8 +189,8 @@ class _F20HomeState extends State<F20Home> {
                         _Shortcut(
                           icon: Icons.menu_book_rounded,
                           color: AppColors.primary,
-                          title: 'What to look for',
-                          subtitle: 'Pests, damage and crop stages',
+                          title: context.tr('What to look for'),
+                          subtitle: context.tr('Pests, damage and crop stages'),
                           onTap: () => context.push(AppRouter.guide),
                         ),
                         ..._attention(),
@@ -211,9 +218,12 @@ class _F20HomeState extends State<F20Home> {
         _AttentionCard(
           icon: Icons.healing_rounded,
           color: AppColors.primary,
-          title: 'How is the field now?',
-          body: 'You applied "${t.treatment}" on ${formatShortDate(t.appliedAt)}. Take a photo so your technician can see if it worked.',
-          action: 'Check the field',
+          title: context.tr('How is the field now?'),
+          body: context.tr(
+            'You applied "{treatment}" on {date}. Take a photo so your technician can see if it worked.',
+            {'treatment': t.treatment, 'date': formatShortDate(t.appliedAt)},
+          ),
+          action: context.tr('Check the field'),
           onTap: () => context.push(
             AppRouter.observe,
             extra: ObserveArgs(followUpOf: t.id, followUpLabel: t.treatment),
@@ -224,19 +234,27 @@ class _F20HomeState extends State<F20Home> {
         _AttentionCard(
           icon: Icons.replay_rounded,
           color: AppColors.danger,
-          title: 'Retake needed',
-          body: r.returnReason.isEmpty ? 'Your technician could not see the photo clearly.' : 'Your technician says: "${r.returnReason}"',
-          action: 'Open the report',
+          title: context.tr('Retake needed'),
+          body: r.returnReason.isEmpty
+              ? context.tr('Your technician could not see the photo clearly.')
+              : context.tr('Your technician says: "{reason}"', {'reason': r.returnReason}),
+          action: context.tr('Open the report'),
           onTap: () => context.push(AppRouter.record, extra: r),
-          subtitle: '${r.isDisease ? 'Disease' : 'Pest'} report · ${formatRelativeDay(r.createdAt)}',
+          subtitle: context.tr(
+            r.isDisease ? 'Disease report · {when}' : 'Pest report · {when}',
+            {'when': formatRelativeDay(r.createdAt)},
+          ),
         ),
       for (final r in _records.where(_readyForTreatment))
         _AttentionCard(
           icon: Icons.verified_rounded,
           color: levelColor(r.level ?? r.confirmed?.level),
-          title: '${r.title}: ${levelLabel(r.level ?? r.confirmed?.level)} infestation',
-          body: 'Validated by your technician. See the treatment options for your crop stage.',
-          action: 'See treatment options',
+          title: context.tr(
+            '{title}: {level} infestation',
+            {'title': r.title, 'level': levelLabel(r.level ?? r.confirmed?.level)},
+          ),
+          body: context.tr('Validated by your technician. See the treatment options for your crop stage.'),
+          action: context.tr('See treatment options'),
           onTap: () => context.push(AppRouter.record, extra: r),
           subtitle: formatRelativeDay(r.createdAt),
         ),
@@ -245,9 +263,9 @@ class _F20HomeState extends State<F20Home> {
     return [
       const SizedBox(height: AppSpacing.xl),
       AppSectionHeader(
-        title: 'Needs your attention',
+        title: context.tr('Needs your attention'),
         trailing: AppChip(label: '${cards.length}', color: AppColors.danger),
-        actionLabel: cards.length > 3 ? 'See all' : null,
+        actionLabel: cards.length > 3 ? context.tr('See all') : null,
         onAction: () => _openTab(AppTab.treatments, AppRouter.treatments),
       ),
       const SizedBox(height: AppSpacing.md),
@@ -298,14 +316,24 @@ class _F20HomeState extends State<F20Home> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    haveOutcome ? 'Treatment success' : 'Follow-ups done',
+                    haveOutcome ? context.tr('Treatment success') : context.tr('Follow-ups done'),
                     style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
                   ),
                   const SizedBox(height: 3),
                   Text(
                     haveOutcome
-                        ? '$improved of $evaluated treated ${evaluated == 1 ? 'field' : 'fields'} improved after the follow-up check.'
-                        : '$followedUp of ${plural(logged, 'treatment')} checked again. Follow-ups show if a treatment worked.',
+                        ? context.tr(
+                            evaluated == 1
+                                ? '{a} of {b} treated field improved after the follow-up check.'
+                                : '{a} of {b} treated fields improved after the follow-up check.',
+                            {'a': improved, 'b': evaluated},
+                          )
+                        : context.tr(
+                            logged == 1
+                                ? '{a} of {b} treatment checked again. Follow-ups show if a treatment worked.'
+                                : '{a} of {b} treatments checked again. Follow-ups show if a treatment worked.',
+                            {'a': followedUp, 'b': logged},
+                          ),
                     style: const TextStyle(color: AppColors.textSecondary, fontSize: 13, height: 1.4),
                   ),
                 ],
@@ -329,8 +357,8 @@ class _F20HomeState extends State<F20Home> {
     return [
       const SizedBox(height: AppSpacing.xl),
       AppSectionHeader(
-        title: 'Recent observations',
-        actionLabel: 'See all',
+        title: context.tr('Recent observations'),
+        actionLabel: context.tr('See all'),
         onAction: () => _openTab(AppTab.records, AppRouter.records),
       ),
       const SizedBox(height: AppSpacing.md),
@@ -363,7 +391,9 @@ class _Hero extends StatelessWidget {
     final place = [s?.barangay ?? '', s?.municipality ?? ''].where((x) => x.isNotEmpty).join(', ');
     final isTech = s?.role == AppRole.technician;
     final validated = records.where((r) => r.state == RecordState.validated).length;
-    final inReview = records.where((r) => r.uploaded && r.state != RecordState.validated).length;
+    final inReview = records
+        .where((r) => r.uploaded && r.state != RecordState.validated && r.state != RecordState.noPests)
+        .length;
 
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle.light,
@@ -387,9 +417,9 @@ class _Hero extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(_greeting(), style: TextStyle(color: Colors.white.withValues(alpha: 0.75), fontSize: 13.5)),
+                          Text(context.tr(_greeting()), style: TextStyle(color: Colors.white.withValues(alpha: 0.75), fontSize: 13.5)),
                           Text(
-                            first.isEmpty ? 'Welcome' : first,
+                            first.isEmpty ? context.tr('Welcome') : first,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
@@ -403,6 +433,9 @@ class _Hero extends StatelessWidget {
                         ],
                       ),
                     ),
+                    const SizedBox(width: AppSpacing.sm),
+                    // Language: English / Filipino / Kinaray-a.
+                    const LanguageButton(dark: true),
                   ],
                 ),
                 const SizedBox(height: AppSpacing.md),
@@ -413,7 +446,7 @@ class _Hero extends StatelessWidget {
                     _HeroChip(icon: Icons.location_on_rounded, label: place.isEmpty ? 'Antique' : place),
                     _HeroChip(
                       icon: isTech ? Icons.engineering_rounded : Icons.agriculture_rounded,
-                      label: isTech ? 'Technician' : 'Farmer',
+                      label: isTech ? context.tr('Technician') : context.tr('Farmer'),
                     ),
                   ],
                 ),
@@ -422,21 +455,21 @@ class _Hero extends StatelessWidget {
                   children: [
                     _HeroStat(
                       value: loaded ? records.length : null,
-                      label: 'Observations',
+                      label: context.tr('Observations'),
                       icon: Icons.photo_library_rounded,
                       colors: const [Color(0xFF0EA5E9), Color(0xFF2563EB)],
                     ),
                     const SizedBox(width: AppSpacing.sm),
                     _HeroStat(
                       value: loaded ? validated : null,
-                      label: 'Validated',
+                      label: context.tr('Validated'),
                       icon: Icons.verified_rounded,
                       colors: const [Color(0xFF22C55E), Color(0xFF0F9F6E)],
                     ),
                     const SizedBox(width: AppSpacing.sm),
                     _HeroStat(
                       value: loaded ? inReview : null,
-                      label: 'In review',
+                      label: context.tr('In review'),
                       icon: Icons.hourglass_top_rounded,
                       colors: const [Color(0xFFF59E0B), Color(0xFFEA580C)],
                     ),
@@ -556,19 +589,20 @@ class _ScanCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Row(
+          Row(
             children: [
-              IconTile(icon: Icons.document_scanner_rounded, size: 50),
-              SizedBox(width: AppSpacing.md),
+              const IconTile(icon: Icons.document_scanner_rounded, size: 50),
+              const SizedBox(width: AppSpacing.md),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Scan your field for pests', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
-                    SizedBox(height: 2),
+                    Text(context.tr('Scan your field for pests'),
+                        style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+                    const SizedBox(height: 2),
                     Text(
-                      'Take a photo. The app names the pest and counts the insects when it can.',
-                      style: TextStyle(color: AppColors.textSecondary, fontSize: 13, height: 1.35),
+                      context.tr('Take a photo. The app names the pest and counts the insects when it can.'),
+                      style: const TextStyle(color: AppColors.textSecondary, fontSize: 13, height: 1.35),
                     ),
                   ],
                 ),
@@ -577,7 +611,7 @@ class _ScanCard extends StatelessWidget {
           ),
           const SizedBox(height: AppSpacing.lg),
           AppPrimaryButton(
-            label: 'Start pest scan',
+            label: context.tr('Start pest scan'),
             icon: Icons.photo_camera_rounded,
             onPressed: () => context.push(AppRouter.observe),
           ),
@@ -588,7 +622,7 @@ class _ScanCard extends StatelessWidget {
                 child: TextButton.icon(
                   onPressed: () => context.push(AppRouter.observe, extra: const ObserveArgs(presetType: 'disease')),
                   icon: const Icon(Icons.coronavirus_outlined, size: 18),
-                  label: const Text('Report disease', style: TextStyle(fontWeight: FontWeight.w700)),
+                  label: Text(context.tr('Report disease'), style: const TextStyle(fontWeight: FontWeight.w700)),
                 ),
               ),
               Container(width: 1, height: 20, color: AppColors.border),
@@ -596,7 +630,7 @@ class _ScanCard extends StatelessWidget {
                 child: TextButton.icon(
                   onPressed: () => showScanGuidelines(context),
                   icon: const Icon(Icons.tips_and_updates_outlined, size: 18),
-                  label: const Text('Scan tips', style: TextStyle(fontWeight: FontWeight.w700)),
+                  label: Text(context.tr('Scan tips'), style: const TextStyle(fontWeight: FontWeight.w700)),
                 ),
               ),
             ],
@@ -624,12 +658,13 @@ Future<void> showScanGuidelines(BuildContext context) {
         shrinkWrap: true,
         padding: const EdgeInsets.fromLTRB(AppSpacing.hPad, 0, AppSpacing.hPad, AppSpacing.lg),
         children: [
-          const Text('Scan tips', style: TextStyle(fontFamily: AppFonts.display, fontSize: 20, fontWeight: FontWeight.w800)),
+          Text(ctx.tr('Scan tips'),
+              style: const TextStyle(fontFamily: AppFonts.display, fontSize: 20, fontWeight: FontWeight.w800)),
           const SizedBox(height: 4),
-          const Text(
-            'The app recognizes Brown Planthopper, Green Leafhopper, Rice Bug and Rice Stem Borer. '
-            'It counts the insects only when they can be told apart.',
-            style: TextStyle(color: AppColors.textSecondary, height: 1.4),
+          Text(
+            ctx.tr('The app recognizes Brown Planthopper, Green Leafhopper, Rice Bug and Rice Stem Borer. '
+                'It counts the insects only when they can be told apart.'),
+            style: const TextStyle(color: AppColors.textSecondary, height: 1.4),
           ),
           const SizedBox(height: AppSpacing.lg),
           for (final (icon, title, body) in tips)
@@ -643,8 +678,8 @@ Future<void> showScanGuidelines(BuildContext context) {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
-                        Text(body, style: const TextStyle(color: AppColors.textSecondary, fontSize: 13)),
+                        Text(ctx.tr(title), style: const TextStyle(fontWeight: FontWeight.bold)),
+                        Text(ctx.tr(body), style: const TextStyle(color: AppColors.textSecondary, fontSize: 13)),
                       ],
                     ),
                   ),
@@ -653,7 +688,7 @@ Future<void> showScanGuidelines(BuildContext context) {
             ),
           const SizedBox(height: AppSpacing.sm),
           AppPrimaryButton(
-            label: 'Start pest scan',
+            label: ctx.tr('Start pest scan'),
             icon: Icons.photo_camera_rounded,
             onPressed: () {
               Navigator.pop(ctx);
@@ -690,42 +725,43 @@ class _QueueCard extends StatelessWidget {
             children: [
               const IconTile(icon: Icons.fact_check_rounded, color: AppColors.orange),
               const SizedBox(width: AppSpacing.md),
-              const Expanded(
+              Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Validation queue', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
-                    Text('Observations in your area', style: TextStyle(color: AppColors.textMuted, fontSize: 12.5)),
+                    Text(context.tr('Validation queue'), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+                    Text(context.tr('Observations in your area'),
+                        style: const TextStyle(color: AppColors.textMuted, fontSize: 12.5)),
                   ],
                 ),
               ),
               if (total > 0)
-                const AppChip(label: 'Action needed', color: AppColors.orange)
+                AppChip(label: context.tr('Action needed'), color: AppColors.orange)
               else if (!loading && error == null)
-                const AppChip(label: 'All caught up', color: AppColors.primary, icon: Icons.check_rounded),
+                AppChip(label: context.tr('All caught up'), color: AppColors.primary, icon: Icons.check_rounded),
             ],
           ),
           const SizedBox(height: AppSpacing.md),
           if (error != null)
-            Text(error!, style: const TextStyle(color: AppColors.textSecondary, fontSize: 13))
+            Text(context.tr(error!), style: const TextStyle(color: AppColors.textSecondary, fontSize: 13))
           else
             Row(
               children: [
-                _QueueStat(label: 'Pest', value: pest, color: AppColors.orange),
-                _QueueStat(label: 'Disease', value: disease, color: AppColors.purple),
+                _QueueStat(label: context.tr('Pest'), value: pest, color: AppColors.orange),
+                _QueueStat(label: context.tr('Disease'), value: disease, color: AppColors.purple),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        loading ? '–' : (oldest ?? 'None'),
+                        loading ? '–' : (oldest ?? context.tr('None')),
                         style: TextStyle(
                           fontSize: 18,
                           fontWeight: FontWeight.w800,
                           color: loading ? AppColors.textMuted : (oldest == null ? AppColors.success : AppColors.danger),
                         ),
                       ),
-                      const Text('Oldest waiting', style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+                      Text(context.tr('Oldest waiting'), style: const TextStyle(color: AppColors.textMuted, fontSize: 12)),
                     ],
                   ),
                 ),
@@ -733,7 +769,7 @@ class _QueueCard extends StatelessWidget {
             ),
           const SizedBox(height: AppSpacing.md),
           AppPrimaryButton(
-            label: total > 0 ? 'Review now' : 'Open the queue',
+            label: total > 0 ? context.tr('Review now') : context.tr('Open the queue'),
             icon: Icons.arrow_forward_rounded,
             compact: true,
             color: total > 0 ? AppColors.orange : AppColors.primary,
@@ -884,23 +920,25 @@ class _ScanHistory extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Row(
+          Row(
             children: [
-              Expanded(child: Text('Scan history', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800))),
-              Text('Last 4 weeks', style: TextStyle(color: AppColors.textMuted, fontSize: 12.5, fontWeight: FontWeight.w600)),
+              Expanded(
+                  child: Text(context.tr('Scan history'), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800))),
+              Text(context.tr('Last 4 weeks'),
+                  style: const TextStyle(color: AppColors.textMuted, fontSize: 12.5, fontWeight: FontWeight.w600)),
             ],
           ),
           const SizedBox(height: AppSpacing.md),
-          for (var i = 0; i < 4; i++) _WeekRow(label: _labels[i], records: weeks[i], maxCount: maxCount),
+          for (var i = 0; i < 4; i++) _WeekRow(label: context.tr(_labels[i]), records: weeks[i], maxCount: maxCount),
           const SizedBox(height: AppSpacing.xs),
-          const Wrap(
+          Wrap(
             spacing: AppSpacing.md,
             runSpacing: 4,
             children: [
-              _Legend(color: AppColors.primary, label: 'Low'),
-              _Legend(color: AppColors.orange, label: 'Medium'),
-              _Legend(color: AppColors.danger, label: 'High'),
-              _Legend(color: AppColors.textMuted, label: 'Not validated yet'),
+              _Legend(color: AppColors.primary, label: context.tr('Low')),
+              _Legend(color: AppColors.orange, label: context.tr('Medium')),
+              _Legend(color: AppColors.danger, label: context.tr('High')),
+              _Legend(color: AppColors.textMuted, label: context.tr('Not validated yet')),
             ],
           ),
         ],
@@ -924,7 +962,8 @@ class _WeekRow extends StatelessWidget {
       if (worst == null || _F20HomeState._rank(l) > _F20HomeState._rank(worst)) worst = l;
     }
     final Color color = worst == null ? AppColors.textMuted : levelColor(worst);
-    final String status = records.isEmpty ? 'None' : (worst == null ? 'Pending' : levelLabel(worst));
+    final String status =
+        records.isEmpty ? context.tr('None') : (worst == null ? context.tr('Pending') : levelLabel(worst));
     return Padding(
       padding: const EdgeInsets.only(bottom: AppSpacing.md),
       child: Row(
@@ -1079,7 +1118,8 @@ class RecordTile extends StatelessWidget {
                   children: [
                     StatusChip(state: r.state),
                     if (level != null && r.state == RecordState.validated) LevelChip(level: level),
-                    if (dueFollowUp) const AppChip(label: 'Check the field', color: AppColors.primary, icon: Icons.healing_rounded),
+                    if (dueFollowUp)
+                      AppChip(label: context.tr('Check the field'), color: AppColors.primary, icon: Icons.healing_rounded),
                   ],
                 ),
               ],

@@ -119,6 +119,7 @@ class SyncService {
         'notes': o.notes,
         'land_type': o.landType,
         if (o.elevationM != null) 'elevation_m': o.elevationM!.toString(),
+        if (o.lat != null && o.gpsAccuracyM != null) 'gps_accuracy': o.gpsAccuracyM!.toStringAsFixed(1),
         if (o.followUpOf != null) 'follow_up_of': '${o.followUpOf}',
         if (o.resubmissionOf != null) 'resubmission_of': '${o.resubmissionOf}',
       };
@@ -271,7 +272,8 @@ class SyncService {
   }
 
   /// A record with its recommendations (and history for staff). Falls back
-  /// to the cached copy when offline.
+  /// to the cached copy when offline. A record deleted on the server (410)
+  /// is dropped from the phone too.
   static Future<Record?> record(int serverId) async {
     final store = LocalStore.instance;
     try {
@@ -279,6 +281,11 @@ class SyncService {
       if (data['is_mine'] == true) await store.saveRecord(data);
       return Record(server: data, localPhoto: await store.localPhoto(data['client_uuid'] as String?));
     } on ApiException catch (e) {
+      if (e.statusCode == 410) {
+        await store.removeRecord(serverId);
+        revision.value++;
+        rethrow;
+      }
       if (!e.isOffline) rethrow;
       final cached = await store.cachedRecord(serverId);
       if (cached == null) rethrow;
@@ -401,10 +408,29 @@ class SyncService {
       _unread = (data['unread'] as num?)?.toInt() ?? 0;
       // New since the last check: pop up on the phone, with sound.
       await NotificationService.instance.announceServerItems(_items(data));
+      _followDeletions(_items(data));
     } catch (_) {
       // offline: keep the last count
     }
     await _updateBadge();
+  }
+
+  /// Highest "record deleted" notice handled in this app session.
+  static int _lastDeletionNotice = 0;
+
+  /// A technician or agriculturist deleted one of this person's records:
+  /// refresh the list now (within the 30-second news check) instead of
+  /// waiting for the next full sync, so the record disappears everywhere.
+  static void _followDeletions(List<Map<String, dynamic>> items) {
+    var newest = _lastDeletionNotice;
+    for (final n in items) {
+      final id = (n['id'] as num?)?.toInt() ?? 0;
+      if (n['kind'] == 'record_deleted' && id > newest) newest = id;
+    }
+    if (newest > _lastDeletionNotice) {
+      _lastDeletionNotice = newest;
+      unawaited(syncAll());
+    }
   }
 
   static List<Map<String, dynamic>> _items(Map<String, dynamic> data) =>
@@ -478,6 +504,26 @@ class SyncService {
     _queueSizes[kind] = data.length;
     queueCount.value = _queueSizes.values.fold(0, (a, b) => a + b);
     return [for (final r in data) Record(server: r as Map<String, dynamic>)];
+  }
+
+  /// Technicians (their area) and agriculturists: deletes an observation on
+  /// the server (with its photo, treatments and history) and on this phone.
+  /// The owner's app drops it on its next check. Throws ApiException (e.g.
+  /// 403 for farmers, offline: deleting needs signal).
+  static Future<void> deleteRecord(int scanId, {String reason = ''}) async {
+    await ApiClient.delete('/sync/scans/$scanId', query: {if (reason.trim().isNotEmpty) 'reason': reason.trim()});
+    await LocalStore.instance.removeRecord(scanId);
+    for (final kind in ['pest', 'disease']) {
+      final cached = await LocalStore.instance.getCache('queue_$kind');
+      if (cached is List) {
+        await LocalStore.instance.putCache('queue_$kind', [
+          for (final r in cached)
+            if (!(r is Map && r['id'] == scanId)) r,
+        ]);
+      }
+    }
+    revision.value++;
+    unawaited(checkNews());
   }
 
   static Future<Record> review(int scanId, Map<String, dynamic> body) async {

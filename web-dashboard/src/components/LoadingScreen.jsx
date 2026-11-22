@@ -1,4 +1,5 @@
 import { APP_NAME, Logo } from './Brand.jsx';
+import { useT } from '../i18n/index.jsx';
 import Icon from './icons.jsx';
 
 /**
@@ -7,6 +8,7 @@ import Icon from './icons.jsx';
  * With `error` set it becomes an error card with Try again / Sign in again.
  */
 export default function LoadingScreen({ steps, current, name, error, onRetry, onSignOut }) {
+  const t = useT();
   const progress = error ? 0 : Math.min(1, (current + 0.5) / steps.length);
   return (
     <div
@@ -54,7 +56,7 @@ export default function LoadingScreen({ steps, current, name, error, onRetry, on
                 className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-gold-500 px-4 py-2.5 text-sm font-bold text-brand-950 transition hover:bg-gold-400 focus:outline-none focus-visible:ring-4 focus-visible:ring-gold-400/40"
               >
                 <Icon name="refresh" className="h-4 w-4" />
-                Try again
+                {t('Try again')}
               </button>
               <button
                 type="button"
@@ -62,13 +64,13 @@ export default function LoadingScreen({ steps, current, name, error, onRetry, on
                 className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-white/20 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-white/10 focus:outline-none focus-visible:ring-4 focus-visible:ring-white/20"
               >
                 <Icon name="logout" className="h-4 w-4" />
-                Sign in again
+                {t('Sign in again')}
               </button>
             </div>
           </div>
         ) : (
           <>
-            <p className="mt-1 h-5 text-sm text-brand-100/75">{name ? `Welcome, ${name}` : 'Getting things ready'}</p>
+            <p className="mt-1 h-5 text-sm text-brand-100/75">{name ? t('Welcome, {name}', { name }) : t('Getting things ready')}</p>
 
             <div className="mx-auto mt-7 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
               <div
@@ -109,7 +111,7 @@ export default function LoadingScreen({ steps, current, name, error, onRetry, on
           </>
         )}
 
-        <p className="mt-8 text-xs text-white/35">{APP_NAME} · Web dashboard</p>
+        <p className="mt-8 text-xs text-white/35">{APP_NAME} · {t('Web dashboard')}</p>
       </div>
     </div>
   );

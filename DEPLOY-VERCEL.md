@@ -88,6 +88,46 @@ Order: Supabase → API → Dashboard → Mobile web app → update the API's CO
 
 ---
 
+## Update 2026-11 (languages, deletion, activity logs, geofencing, no-pests results)
+
+Do these once, in this order, on the existing deployment:
+
+1. **Database (Supabase > SQL Editor)** — review, then run:
+   * `supabase/01_schema.sql` again (idempotent; the new section "2026-11" at
+     the end adds the language column, PSGC location tables and
+     `palay_locate()`, detection-result columns, `role_permissions`,
+     `deleted_records`, the `palay_rls_actor` role with the delete policies,
+     `user_sessions` and `user_activity_logs`). Nothing existing is deleted.
+   * `supabase/02_antique_locations.sql` (Antique province, 18 municipalities,
+     590 barangays with PSGC codes and boundaries; generated from
+     `supabase/antique_barangays.geojson`). Safe to run again.
+   Until step 1 is done the API keeps working; the new features switch off
+   (e.g. the activity log page answers 503, photos are never deleted).
+2. **API env vars** (all optional): `SMTP_HOST` / `SMTP_PORT` (another mail
+   provider; default Gmail 587), `NO_PEST_MAX_SCORE` (default `0.12`),
+   `NO_PEST_MIN_SIDE` (default `480`), `GEO_MAX_ACCURACY_M` (default `150`).
+   Redeploy the API.
+3. **Redeploy the dashboard and the mobile web app** (no new variables).
+   The mobile web app now loads CanvasKit from its own site and registers
+   `offline_sw.js`, so after one visit with signal it also opens offline.
+4. Rebuild the Android APK as before (`flutter build apk ...`): the Antique
+   barangay map is bundled in the app (`assets/geo/`), so GPS lookups work
+   without signal.
+
+Record deletion is enforced twice: by the API (agriculturists anywhere,
+technicians in their coverage area and for their own submissions, never
+farmers) and by Postgres row level security — the API deletes as the
+`palay_rls_actor` role, and the policy checks the same rule plus
+`role_permissions`. To change who may delete, edit `role_permissions`
+(`records.delete`).
+
+Tests: `python -m pytest -q` in `rice-pest-api` (the database tests run
+only when `TEST_DATABASE_URL` points to a throwaway PostgreSQL + PostGIS
+database prepared with the two SQL files; never the live one), `flutter
+test` in `mobile-app`.
+
+---
+
 ## Move the existing data (optional)
 
 Your current data is in two local databases (`rice_pest_db2`, `rice_pest_geo`)

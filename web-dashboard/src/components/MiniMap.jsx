@@ -1,10 +1,12 @@
 import { useEffect, useRef } from 'react';
 import L from 'leaflet';
+import { useT } from '../i18n/index.jsx';
 import { osmLink } from '../lib.js';
 import { TILE_ATTRIBUTION, TILE_URL } from './HotspotMap.jsx';
 
 /** Small, non-interactive map pinning one observation's GPS location. */
 export default function MiniMap({ lat, lng }) {
+  const t = useT();
   const ref = useRef(null);
 
   useEffect(() => {
@@ -38,7 +40,7 @@ export default function MiniMap({ lat, lng }) {
         target="_blank"
         rel="noreferrer"
       >
-        {lat.toFixed(5)}, {lng.toFixed(5)} · open in OpenStreetMap
+        {lat.toFixed(5)}, {lng.toFixed(5)} · {t('open in OpenStreetMap')}
       </a>
     </div>
   );

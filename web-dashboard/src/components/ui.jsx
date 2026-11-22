@@ -1,4 +1,5 @@
 import { useEffect, useId, useState } from 'react';
+import { useT } from '../i18n/index.jsx';
 
 // ---------------------------------------------------------------- layout
 
@@ -17,10 +18,11 @@ export function PageHeader({ title, description, actions, area }) {
 
 /** Shown to technicians: their data is limited to their coverage area. */
 export function ScopeNote({ area }) {
+  const t = useT();
   return (
     <div className="mt-2 inline-flex items-center gap-2 rounded-full bg-brand-100 px-3 py-1 text-xs font-semibold text-brand-900">
       <span className="h-1.5 w-1.5 rounded-full bg-brand-700" />
-      {area ? `Your coverage: ${area}` : 'No coverage area on your account yet — ask an agriculturist to set one.'}
+      {area ? t('Your coverage: {area}', { area }) : t('No coverage area on your account yet — ask an agriculturist to set one.')}
     </div>
   );
 }
@@ -88,8 +90,9 @@ export const LEVEL_TONE = { LOW: 'green', MEDIUM: 'orange', HIGH: 'red' };
 export const LEVEL_COLOR = { LOW: '#10B981', MEDIUM: '#E67E22', HIGH: '#E63946' };
 
 export function LevelBadge({ level }) {
+  const t = useT();
   if (!level) return <span className="text-muted">—</span>;
-  return <Badge tone={LEVEL_TONE[level]}>{level}</Badge>;
+  return <Badge tone={LEVEL_TONE[level]}>{t(level)}</Badge>;
 }
 
 const STATUS = {
@@ -97,12 +100,16 @@ const STATUS = {
   validated: ['green', 'Validated'],
   returned: ['gray', 'Returned to farmer'],
   escalated: ['purple', 'Escalated'],
+  // The model confidently found no insect on a clear photo (photo removed).
+  no_pests: ['blue', 'No pests found'],
 };
+/** [value, English label] pairs; translate the label where it is shown. */
 export const STATUS_OPTIONS = Object.entries(STATUS).map(([k, [, label]]) => [k, label]);
 
 export function StatusBadge({ status }) {
+  const t = useT();
   const [tone, label] = STATUS[status] || ['gray', status || '—'];
-  return <Badge tone={tone}>{label}</Badge>;
+  return <Badge tone={tone}>{t(label)}</Badge>;
 }
 
 const PATTERN = {
@@ -112,8 +119,9 @@ const PATTERN = {
 };
 
 export function PatternBadge({ status }) {
+  const t = useT();
   const [tone, label] = PATTERN[status] || ['gray', status];
-  return <Badge tone={tone}>{label}</Badge>;
+  return <Badge tone={tone}>{t(label)}</Badge>;
 }
 
 const OUTCOME = {
@@ -126,22 +134,25 @@ const OUTCOME = {
 };
 
 export function OutcomeBadge({ outcome }) {
+  const t = useT();
   const [tone, label] = OUTCOME[outcome] || ['gray', outcome];
-  return <Badge tone={tone}>{label}</Badge>;
+  return <Badge tone={tone}>{t(label)}</Badge>;
 }
 
 export function ReportTypeBadge({ type }) {
-  return type === 'disease' ? <Badge tone="purple">Disease</Badge> : <Badge tone="brand">Pest</Badge>;
+  const t = useT();
+  return type === 'disease' ? <Badge tone="purple">{t('Disease')}</Badge> : <Badge tone="brand">{t('Pest')}</Badge>;
 }
 
 /** Horizontal bar split into LOW / MEDIUM / HIGH shares. */
 export function LevelBar({ LOW = 0, MEDIUM = 0, HIGH = 0, className = 'h-2' }) {
+  const t = useT();
   const total = LOW + MEDIUM + HIGH;
   if (!total) return <div className={`w-full rounded-full bg-gray-100 ${className}`} />;
   return (
     <div
       className={`flex w-full overflow-hidden rounded-full bg-gray-100 ${className}`}
-      title={`LOW ${LOW} · MEDIUM ${MEDIUM} · HIGH ${HIGH}`}
+      title={`${t('LOW')} ${LOW} · ${t('MEDIUM')} ${MEDIUM} · ${t('HIGH')} ${HIGH}`}
     >
       {[['LOW', LOW], ['MEDIUM', MEDIUM], ['HIGH', HIGH]].map(([k, v]) =>
         v ? <div key={k} style={{ width: `${(v / total) * 100}%`, background: LEVEL_COLOR[k] }} /> : null,
@@ -258,6 +269,7 @@ export function CheckChips({ value, onChange, options, noneLabel }) {
 
 /** Free-text tags (e.g. barangay names). Enter or comma adds one; paste a comma list. */
 export function ChipsInput({ value, onChange, placeholder, disabled, suggestions = [] }) {
+  const tr = useT();
   const [draft, setDraft] = useState('');
   const listId = useId();
   const add = (text) => {
@@ -279,7 +291,7 @@ export function ChipsInput({ value, onChange, placeholder, disabled, suggestions
         <span key={v} className="inline-flex items-center gap-1 rounded-full bg-brand-100 px-2 py-0.5 text-xs font-semibold text-brand-900">
           {v}
           {!disabled && (
-            <button type="button" aria-label={`Remove ${v}`} className="text-brand-700 hover:text-red-600" onClick={() => onChange(value.filter((x) => x !== v))}>
+            <button type="button" aria-label={tr('Remove {name}', { name: v })} className="text-brand-700 hover:text-red-600" onClick={() => onChange(value.filter((x) => x !== v))}>
               ×
             </button>
           )}
@@ -315,23 +327,26 @@ export function ChipsInput({ value, onChange, placeholder, disabled, suggestions
 
 // ---------------------------------------------------------------- states
 
-export function Loading({ label = 'Loading…' }) {
+export function Loading({ label }) {
+  const t = useT();
   return (
     <div className="flex items-center gap-3 p-8 text-sm text-ink2">
       <span className="h-4 w-4 animate-spin rounded-full border-2 border-brand-700 border-r-transparent" />
-      {label}
+      {label ?? t('Loading…')}
     </div>
   );
 }
 
+/** Error box. Known server messages are shown in the chosen language. */
 export function ErrorNote({ message, onRetry }) {
+  const t = useT();
   if (!message) return null;
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-      <span>{message}</span>
+      <span>{t(message)}</span>
       {onRetry && (
         <Button variant="danger" size="sm" onClick={onRetry}>
-          Try again
+          {t('Try again')}
         </Button>
       )}
     </div>
@@ -364,6 +379,7 @@ export function Empty({ title, children }) {
  * Rows are clickable when onRowClick is given.
  */
 export function Table({ columns, rows, rowKey = 'id', onRowClick, empty }) {
+  const t = useT();
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
@@ -392,7 +408,7 @@ export function Table({ columns, rows, rowKey = 'id', onRowClick, empty }) {
           ))}
         </tbody>
       </table>
-      {!rows.length && (empty || <Empty title="Nothing to show" />)}
+      {!rows.length && (empty || <Empty title={t('Nothing to show')} />)}
     </div>
   );
 }
@@ -400,6 +416,7 @@ export function Table({ columns, rows, rowKey = 'id', onRowClick, empty }) {
 // ---------------------------------------------------------------- drawer
 
 export function Drawer({ open, onClose, title, subtitle, children, width = 'max-w-2xl' }) {
+  const t = useT();
   useEffect(() => {
     if (!open) return undefined;
     const onKey = (e) => e.key === 'Escape' && onClose();
@@ -424,7 +441,7 @@ export function Drawer({ open, onClose, title, subtitle, children, width = 'max-
           <button
             type="button"
             onClick={onClose}
-            aria-label="Close"
+            aria-label={t('Close')}
             className="rounded-lg p-2 text-ink2 hover:bg-canvas hover:text-ink"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">

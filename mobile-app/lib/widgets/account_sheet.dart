@@ -3,11 +3,14 @@ import 'package:go_router/go_router.dart';
 
 import '../app_router.dart';
 import '../controllers/auth_controller.dart';
+import '../l10n/app_language.dart';
+import '../services/auth_service.dart';
 import '../services/local_store.dart';
 import '../services/sync_service.dart';
 import '../theme.dart';
 import 'app_widgets.dart';
 import 'brand.dart';
+import 'language_button.dart';
 import 'user_avatar.dart';
 
 /// The user's profile picture (or initials) that opens the account sheet
@@ -21,7 +24,7 @@ class AccountButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return Semantics(
       button: true,
-      label: 'Account',
+      label: context.tr('Account'),
       child: InkResponse(
         onTap: () => showAccountSheet(context),
         radius: 28,
@@ -71,20 +74,19 @@ class _AccountSheetState extends State<_AccountSheet> {
   }
 
   Future<void> _signOut() async {
-    final auth = AuthControllerImpl.instance;
     if (await LocalStore.instance.hasPendingWork() && mounted) {
       final leave = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
-          title: const Text('Some work has not been sent'),
-          content: const Text(
+          title: Text(ctx.tr('Some work has not been sent')),
+          content: Text(ctx.tr(
             'You have observations or treatments that are still on this phone. '
             'They are sent when you sign in again with this account. '
             'If a different account signs in on this phone, they are deleted.',
-          ),
+          )),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Stay signed in')),
-            TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Sign out')),
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(ctx.tr('Stay signed in'))),
+            TextButton(onPressed: () => Navigator.pop(ctx, true), child: Text(ctx.tr('Sign out'))),
           ],
         ),
       );
@@ -92,17 +94,18 @@ class _AccountSheetState extends State<_AccountSheet> {
     }
     if (!mounted) return;
     Navigator.of(context).pop();
-    auth.logout();
+    // Ends the session on the server too (best effort; works without signal).
+    await AuthService.instance.signOut();
   }
 
   @override
   Widget build(BuildContext context) {
     final s = AuthControllerImpl.instance.session;
-    final roleLabel = switch (s?.role) {
+    final roleLabel = context.tr(switch (s?.role) {
       AppRole.technician => 'Agricultural technician',
       AppRole.agriculturist => 'Agriculturist',
       _ => 'Farmer',
-    };
+    });
     final place = [s?.barangay ?? '', s?.municipality ?? ''].where((x) => x.isNotEmpty).join(', ');
     return SafeArea(
       child: Padding(
@@ -147,17 +150,17 @@ class _AccountSheetState extends State<_AccountSheet> {
                   const SizedBox(width: AppSpacing.md),
                   Expanded(
                     child: Text(
-                      _hasWaiting == null
+                      context.tr(_hasWaiting == null
                           ? 'Checking…'
                           : _hasWaiting!
                               ? 'Some observations are waiting for signal.'
-                              : 'Everything is sent.',
+                              : 'Everything is sent.'),
                       style: const TextStyle(fontWeight: FontWeight.w600),
                     ),
                   ),
                   if (_hasWaiting == true)
                     AppPrimaryButton(
-                      label: 'Send now',
+                      label: context.tr('Send now'),
                       compact: true,
                       expanded: false,
                       loading: _syncing,
@@ -167,8 +170,24 @@ class _AccountSheetState extends State<_AccountSheet> {
               ),
             ),
             const SizedBox(height: AppSpacing.lg),
+            AppCard(
+              child: Row(
+                children: [
+                  const IconTile(icon: Icons.translate_rounded, color: AppColors.sky, size: 40),
+                  const SizedBox(width: AppSpacing.md),
+                  Expanded(
+                    child: Text(
+                      '${context.tr('Language')}: ${context.lang.label}',
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                  const LanguageButton(),
+                ],
+              ),
+            ),
+            const SizedBox(height: AppSpacing.lg),
             AppPrimaryButton(
-              label: 'Edit profile',
+              label: context.tr('Edit profile'),
               icon: Icons.manage_accounts_rounded,
               onPressed: () {
                 final router = GoRouter.of(context);
@@ -178,14 +197,14 @@ class _AccountSheetState extends State<_AccountSheet> {
             ),
             const SizedBox(height: AppSpacing.md),
             AppSecondaryButton(
-              label: 'Sign out',
+              label: context.tr('Sign out'),
               icon: Icons.logout_rounded,
               color: AppColors.danger,
               onPressed: _signOut,
             ),
             const SizedBox(height: AppSpacing.md),
-            const Center(
-              child: Text('$kAppName · Mobile', style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+            Center(
+              child: Text('$kAppName · ${context.tr('Mobile')}', style: const TextStyle(color: AppColors.textMuted, fontSize: 12)),
             ),
           ],
         ),

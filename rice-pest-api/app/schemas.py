@@ -1,5 +1,5 @@
 import re
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
@@ -32,6 +32,12 @@ class RegisterSchema(BaseModel):
     # 'pending' (no access) until an agriculturist approves it and confirms or
     # changes the role. Farmers need approval only while REQUIRE_ACCOUNT_APPROVAL is on.
     role: Literal["farmer", "technician", "agriculturist"] = "farmer"
+    # Optional (newer apps): the barangay's PSGC code when it was picked from
+    # the official list or found from GPS, how it was found, and the language
+    # chosen in the app (en, fil = Filipino, krj = Kinaray-a).
+    barangay_psgc: Optional[str] = Field(None, max_length=10, pattern=r"^[0-9]{10}$")
+    location_source: Literal["manual", "gps"] = "manual"
+    preferred_language: Optional[Literal["en", "fil", "krj"]] = None
 
     @field_validator("phone")
     @classmethod

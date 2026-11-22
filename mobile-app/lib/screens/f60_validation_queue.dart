@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import '../app_router.dart';
 import '../controllers/auth_controller.dart';
+import '../l10n/app_language.dart';
 import '../models/record.dart';
 import '../services/api_client.dart';
 import '../services/sync_service.dart';
@@ -75,12 +76,14 @@ class _F60ValidationQueueState extends State<F60ValidationQueue> with WidgetsBin
   Widget build(BuildContext context) {
     final s = AuthControllerImpl.instance.session;
     final list = _items[_kind];
-    final area = s?.municipality.isNotEmpty == true ? 'Your area: ${s!.municipality}' : 'No area assigned yet';
+    final area = s?.municipality.isNotEmpty == true
+        ? context.tr('Your area: {area}', {'area': s!.municipality})
+        : context.tr('No area assigned yet');
     return Scaffold(
       body: SafeArea(
         child: Column(
           children: [
-            AppHeader(title: 'Validation queue', subtitle: area),
+            AppHeader(title: context.tr('Validation queue'), subtitle: area),
             Padding(
               padding: const EdgeInsets.fromLTRB(AppSpacing.hPad, AppSpacing.xs, AppSpacing.hPad, AppSpacing.sm),
               child: _KindToggle(
@@ -96,8 +99,8 @@ class _F60ValidationQueueState extends State<F60ValidationQueue> with WidgetsBin
                 child: InfoBanner(
                   icon: _offline ? Icons.cloud_off_rounded : Icons.error_outline_rounded,
                   color: _offline ? AppColors.textSecondary : AppColors.danger,
-                  message: _offline ? 'No signal. Showing the last list.' : _error!,
-                  actionLabel: 'Retry',
+                  message: _offline ? context.tr('No signal. Showing the last list.') : context.tr(_error!),
+                  actionLabel: context.tr('Retry'),
                   onAction: _load,
                 ),
               ),
@@ -111,9 +114,9 @@ class _F60ValidationQueueState extends State<F60ValidationQueue> with WidgetsBin
                         ? ListView(children: [
                             AppEmptyState(
                               icon: Icons.cloud_off_rounded,
-                              title: 'Can\'t load the queue',
-                              message: _error!,
-                              actionLabel: 'Try again',
+                              title: context.tr('Can\'t load the queue'),
+                              message: context.tr(_error!),
+                              actionLabel: context.tr('Try again'),
                               onAction: _load,
                               color: AppColors.danger,
                             ),
@@ -127,8 +130,10 @@ class _F60ValidationQueueState extends State<F60ValidationQueue> with WidgetsBin
                                 ? ListView(children: [
                                     AppEmptyState(
                                       icon: Icons.task_alt_rounded,
-                                      title: 'All caught up',
-                                      message: 'No ${_kind == 'pest' ? 'pest' : 'disease'} observations waiting in your area.',
+                                      title: context.tr('All caught up'),
+                                      message: _kind == 'pest'
+                                          ? context.tr('No pest observations waiting in your area.')
+                                          : context.tr('No disease observations waiting in your area.'),
                                     ),
                                   ])
                                 : ListView.separated(
@@ -218,8 +223,8 @@ class _KindToggle extends StatelessWidget {
       ),
       child: Row(
         children: [
-          option('pest', 'Pest', Icons.bug_report_outlined, pest),
-          option('disease', 'Disease', Icons.coronavirus_outlined, disease),
+          option('pest', context.tr('Pest'), Icons.bug_report_outlined, pest),
+          option('disease', context.tr('Disease'), Icons.coronavirus_outlined, disease),
         ],
       ),
     );
@@ -239,11 +244,11 @@ class _QueueRow extends StatelessWidget {
     final waitColor = hours >= 72 ? AppColors.danger : (hours >= 24 ? AppColors.orange : AppColors.primary);
     final String title;
     if (r.isDisease) {
-      title = 'Disease report';
+      title = context.tr('Disease report');
     } else if (ai != null && ai.recognized) {
       title = ai.pestLabel;
     } else {
-      title = 'Model result: not identified';
+      title = context.tr('Model result: not identified');
     }
     return AppCard(
       onTap: onTap,
@@ -267,7 +272,8 @@ class _QueueRow extends StatelessWidget {
                     style: const TextStyle(fontSize: 15.5, fontWeight: FontWeight.w800)),
                 if (!r.isDisease && ai != null && ai.recognized)
                   Text(
-                    '${((ai.confidence ?? 0) * 100).round()}% sure · ${ai.count != null ? plural(ai.count!, 'insect') : 'not countable'}',
+                    '${context.tr('{n}% sure', {'n': ((ai.confidence ?? 0) * 100).round()})} · '
+                    '${ai.count != null ? plural(ai.count!, 'insect') : context.tr('not countable')}',
                     style: const TextStyle(color: AppColors.textSecondary, fontSize: 12.5),
                   ),
                 const SizedBox(height: 2),
@@ -286,7 +292,9 @@ class _QueueRow extends StatelessWidget {
                   ],
                 ),
                 Text(
-                  '${r.submitterName}${r.submitterRole == 'technician' ? ' (technician)' : ''}',
+                  r.submitterRole == 'technician'
+                      ? context.tr('{name} (technician)', {'name': r.submitterName})
+                      : r.submitterName,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(color: AppColors.textMuted, fontSize: 12.5),
@@ -297,9 +305,13 @@ class _QueueRow extends StatelessWidget {
                     spacing: 6,
                     children: [
                       if (r.resubmissionOf != null)
-                        AppChip(label: 'Retake of #${r.resubmissionOf}', color: AppColors.primary, icon: Icons.replay_rounded),
+                        AppChip(
+                          label: context.tr('Retake of #{id}', {'id': r.resubmissionOf}),
+                          color: AppColors.primary,
+                          icon: Icons.replay_rounded,
+                        ),
                       if (r.followUpOf != null)
-                        const AppChip(label: 'Follow-up', color: AppColors.sky, icon: Icons.healing_rounded),
+                        AppChip(label: context.tr('Follow-up'), color: AppColors.sky, icon: Icons.healing_rounded),
                     ],
                   ),
                 ],

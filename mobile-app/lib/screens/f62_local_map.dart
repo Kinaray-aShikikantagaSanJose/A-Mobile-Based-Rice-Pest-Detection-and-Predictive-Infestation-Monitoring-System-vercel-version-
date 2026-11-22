@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../app_router.dart';
+import '../l10n/app_language.dart';
 import '../services/api_client.dart';
 import '../services/gps_service.dart';
 import '../theme.dart';
@@ -83,7 +84,9 @@ double _km(double lat1, double lng1, double lat2, double lng2) {
   return 2 * r * math.asin(math.sqrt(a));
 }
 
-String _distance(double km) => km < 1 ? '${(km * 1000).round()} m away' : '${km.toStringAsFixed(km < 10 ? 1 : 0)} km away';
+String _distance(BuildContext context, double km) => km < 1
+    ? context.tr('{n} m away', {'n': (km * 1000).round()})
+    : context.tr('{n} km away', {'n': km.toStringAsFixed(km < 10 ? 1 : 0)});
 
 /// Technicians: validated records near them (their coverage area), as pins
 /// coloured by infestation level and one risk circle per barangay, or as a
@@ -229,7 +232,7 @@ class _F62LocalMapState extends State<F62LocalMap> {
       firstDate: DateTime(now.year - 3),
       lastDate: now,
       initialDateRange: _range ?? DateTimeRange(start: now.subtract(Duration(days: _days)), end: now),
-      helpText: 'Show records from',
+      helpText: context.tr('Show records from'),
     );
     if (picked == null || !mounted) return;
     setState(() => _range = picked);
@@ -242,7 +245,8 @@ class _F62LocalMapState extends State<F62LocalMap> {
     if (ask && !r.hasFix && mounted) {
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
-        ..showSnackBar(const SnackBar(content: Text('Could not find your location. Turn on location and try again.')));
+        ..showSnackBar(
+            SnackBar(content: Text(context.tr('Could not find your location. Turn on location and try again.'))));
     }
   }
 
@@ -273,18 +277,18 @@ class _F62LocalMapState extends State<F62LocalMap> {
             color: _spreadColors[i % _spreadColors.length],
           ),
     ];
-    final area = _area == null || _area!.isEmpty ? 'No coverage area set on your account' : _area!;
+    final area = _area == null || _area!.isEmpty ? context.tr('No coverage area set on your account') : _area!;
     return Scaffold(
       body: SafeArea(
         child: Column(
           children: [
             AppHeader(
-              title: 'Local map',
+              title: context.tr('Local map'),
               subtitle: area,
               actions: [
                 AppCircleButton(
                   icon: Icons.my_location_rounded,
-                  tooltip: 'Show where I am',
+                  tooltip: context.tr('Show where I am'),
                   color: _me.hasFix ? AppColors.sky : null,
                   onTap: () => _locate(ask: true),
                 ),
@@ -327,9 +331,11 @@ class _F62LocalMapState extends State<F62LocalMap> {
                       children: [
                         Expanded(
                           child: SegmentedButton<bool>(
-                            segments: const [
-                              ButtonSegment(value: false, label: Text('Markers'), icon: Icon(Icons.place_outlined)),
-                              ButtonSegment(value: true, label: Text('Heatmap'), icon: Icon(Icons.blur_on_rounded)),
+                            segments: [
+                              ButtonSegment(
+                                  value: false, label: Text(context.tr('Markers')), icon: const Icon(Icons.place_outlined)),
+                              ButtonSegment(
+                                  value: true, label: Text(context.tr('Heatmap')), icon: const Icon(Icons.blur_on_rounded)),
                             ],
                             selected: {_heat},
                             showSelectedIcon: false,
@@ -341,9 +347,9 @@ class _F62LocalMapState extends State<F62LocalMap> {
                     if (_heat) ...[
                       const SizedBox(height: AppSpacing.sm),
                       SegmentedButton<bool>(
-                        segments: const [
-                          ButtonSegment(value: false, label: Text('By level')),
-                          ButtonSegment(value: true, label: Text('By number of cases')),
+                        segments: [
+                          ButtonSegment(value: false, label: Text(context.tr('By level'))),
+                          ButtonSegment(value: true, label: Text(context.tr('By number of cases'))),
                         ],
                         selected: {_weightByCases},
                         showSelectedIcon: false,
@@ -355,8 +361,8 @@ class _F62LocalMapState extends State<F62LocalMap> {
                       InfoBanner(
                         icon: Icons.cloud_off_rounded,
                         color: AppColors.textSecondary,
-                        message: 'No signal. Showing the map saved ${formatDateTime(_savedAt)}.',
-                        actionLabel: 'Retry',
+                        message: context.tr('No signal. Showing the map saved {date}.', {'date': formatDateTime(_savedAt)}),
+                        actionLabel: context.tr('Retry'),
                         busy: _loading,
                         onAction: _load,
                       ),
@@ -365,9 +371,9 @@ class _F62LocalMapState extends State<F62LocalMap> {
                     if (_error != null && _points == null)
                       AppEmptyState(
                         icon: Icons.cloud_off_rounded,
-                        title: 'Can\'t load the map',
-                        message: _error!,
-                        actionLabel: 'Try again',
+                        title: context.tr('Can\'t load the map'),
+                        message: context.tr(_error!),
+                        actionLabel: context.tr('Try again'),
                         onAction: _load,
                       )
                     else ...[
@@ -381,7 +387,9 @@ class _F62LocalMapState extends State<F62LocalMap> {
                                     lat: p.lat,
                                     lng: p.lng,
                                     severity: p.level ?? '',
-                                    tag: points.length <= 15 ? _pestShort[p.pestKey] : null,
+                                    tag: points.length <= 15 && _pestShort[p.pestKey] != null
+                                        ? context.tr(_pestShort[p.pestKey]!)
+                                        : null,
                                   ),
                               if (_me.hasFix) ScanMarker(lat: _me.lat!, lng: _me.lng!, isUser: true),
                             ],
@@ -409,7 +417,8 @@ class _F62LocalMapState extends State<F62LocalMap> {
                             height: 330,
                             zoom: 14,
                             interactive: true,
-                            emptyMessage: _points == null ? null : 'No validated records with a location in this period.',
+                            emptyMessage:
+                                _points == null ? null : context.tr('No validated records with a location in this period.'),
                           ),
                           if (_heat)
                             Positioned(
@@ -425,8 +434,9 @@ class _F62LocalMapState extends State<F62LocalMap> {
                                       color: AppColors.surface.withValues(alpha: 0.92),
                                       borderRadius: BorderRadius.circular(AppRadius.sm),
                                     ),
-                                    child: const Text(_heatNote,
-                                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+                                    child: Text(context.tr(_heatNote),
+                                        style: const TextStyle(
+                                            fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
                                   ),
                                 ),
                               ),
@@ -456,12 +466,12 @@ class _F62LocalMapState extends State<F62LocalMap> {
                       const SizedBox(height: AppSpacing.lg),
                       _Totals(points: points, hotspots: hotspots, loaded: _points != null),
                       const SizedBox(height: AppSpacing.xl),
-                      const AppSectionHeader(title: 'Directional spread'),
+                      AppSectionHeader(title: context.tr('Directional spread')),
                       const SizedBox(height: AppSpacing.md),
                       _SpreadCard(spread: _spread, items: spread),
                       if (hotspots.isNotEmpty) ...[
                         const SizedBox(height: AppSpacing.xl),
-                        AppSectionHeader(title: _me.hasFix ? 'Hotspots nearest to you' : 'Hotspots'),
+                        AppSectionHeader(title: _me.hasFix ? context.tr('Hotspots nearest to you') : context.tr('Hotspots')),
                         const SizedBox(height: AppSpacing.md),
                         for (final (i, h) in hotspots.take(8).indexed) ...[
                           FadeSlideIn(index: i, child: _HotspotCard(hotspot: h, distanceKm: _distanceTo(h.lat, h.lng))),
@@ -470,7 +480,7 @@ class _F62LocalMapState extends State<F62LocalMap> {
                       ],
                       if (points.isNotEmpty) ...[
                         const SizedBox(height: AppSpacing.lg),
-                        const AppSectionHeader(title: 'Latest validated records'),
+                        AppSectionHeader(title: context.tr('Latest validated records')),
                         const SizedBox(height: AppSpacing.md),
                         AppCard(
                           padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.xs),
@@ -505,12 +515,12 @@ class _HeatLegend extends StatelessWidget {
   Widget build(BuildContext context) => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(byCases ? 'Number of validated cases' : 'Weighted by infestation level',
+          Text(byCases ? context.tr('Number of validated cases') : context.tr('Weighted by infestation level'),
               style: const TextStyle(color: AppColors.textSecondary, fontSize: 12, fontWeight: FontWeight.w700)),
           const SizedBox(height: 4),
           Row(
             children: [
-              const Text('Low', style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+              Text(context.tr('Low'), style: const TextStyle(color: AppColors.textMuted, fontSize: 12)),
               const SizedBox(width: 6),
               Expanded(
                 child: Container(
@@ -525,7 +535,7 @@ class _HeatLegend extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 6),
-              const Text('High', style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+              Text(context.tr('High'), style: const TextStyle(color: AppColors.textMuted, fontSize: 12)),
             ],
           ),
         ],
@@ -552,14 +562,14 @@ class _SpreadCard extends StatelessWidget {
               style: const TextStyle(color: AppColors.textSecondary, fontSize: 12.5),
             ),
           if (s == null)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: AppSpacing.sm),
-              child: Text('Open the map with signal to see the direction.', style: TextStyle(fontSize: 14)),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+              child: Text(context.tr('Open the map with signal to see the direction.'), style: const TextStyle(fontSize: 14)),
             )
           else if (items.isEmpty)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
-              child: Text('${s['not_enough_message'] ?? 'Not enough data to show direction.'}',
+              child: Text('${s['not_enough_message'] ?? context.tr('Not enough data to show direction.')}',
                   style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700)),
             ),
           for (final (i, it) in items.indexed) ...[
@@ -593,7 +603,7 @@ class _SpreadCard extends StatelessWidget {
             ),
           ],
           const SizedBox(height: AppSpacing.md),
-          const Text(_spreadNote, style: TextStyle(color: AppColors.textSecondary, fontSize: 12.5, height: 1.4)),
+          Text(context.tr(_spreadNote), style: const TextStyle(color: AppColors.textSecondary, fontSize: 12.5, height: 1.4)),
         ],
       ),
     );
@@ -663,26 +673,30 @@ class _Filters extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         row([
-          for (final (d, label) in periods) chip(label, days == d, () => onDays(d)),
-          chip(r == null ? 'Custom dates' : '${formatShortDate(isoDate(r.start))} - ${formatShortDate(isoDate(r.end))}',
-              r != null, onCustomRange),
+          for (final (d, label) in periods) chip(context.tr(label), days == d, () => onDays(d)),
+          chip(
+              r == null
+                  ? context.tr('Custom dates')
+                  : '${formatShortDate(isoDate(r.start))} - ${formatShortDate(isoDate(r.end))}',
+              r != null,
+              onCustomRange),
         ]),
         const SizedBox(height: 4),
         row([
-          chip('All pests', pest == null, () => onPest(null)),
+          chip(context.tr('All pests'), pest == null, () => onPest(null)),
           for (final p in {...pests, ?pest}) chip(p, pest == p, () => onPest(p)),
         ]),
         const SizedBox(height: 4),
         row([
-          chip('All stages', stage == null, () => onStage(null)),
-          for (final s in kCropStages) chip(s, stage == s, () => onStage(s)),
+          chip(context.tr('All stages'), stage == null, () => onStage(null)),
+          for (final s in kCropStages) chip(context.tr(s), stage == s, () => onStage(s)),
         ]),
         const SizedBox(height: 4),
         row([
-          chip('All levels', level == null, () => onLevel(null)),
-          chip('Low', level == 'LOW', () => onLevel('LOW'), color: AppColors.primary),
-          chip('Medium', level == 'MEDIUM', () => onLevel('MEDIUM'), color: AppColors.orange),
-          chip('High', level == 'HIGH', () => onLevel('HIGH'), color: AppColors.danger),
+          chip(context.tr('All levels'), level == null, () => onLevel(null)),
+          chip(context.tr('Low'), level == 'LOW', () => onLevel('LOW'), color: AppColors.primary),
+          chip(context.tr('Medium'), level == 'MEDIUM', () => onLevel('MEDIUM'), color: AppColors.orange),
+          chip(context.tr('High'), level == 'HIGH', () => onLevel('HIGH'), color: AppColors.danger),
         ]),
       ],
     );
@@ -721,14 +735,16 @@ class _Totals extends StatelessWidget {
     const numStyle = TextStyle(fontFamily: AppFonts.display, fontSize: 20, fontWeight: FontWeight.w800);
     return Row(
       children: [
-        tile('Validated', loaded ? CountUp(value: points.length, style: numStyle) : const Text('–', style: numStyle),
+        tile(context.tr('Validated'),
+            loaded ? CountUp(value: points.length, style: numStyle) : const Text('–', style: numStyle),
             Icons.verified_rounded, AppColors.primary),
         const SizedBox(width: AppSpacing.sm),
-        tile('High hotspots', loaded ? CountUp(value: high, style: numStyle) : const Text('–', style: numStyle),
+        tile(context.tr('High hotspots'),
+            loaded ? CountUp(value: high, style: numStyle) : const Text('–', style: numStyle),
             Icons.local_fire_department_rounded, AppColors.danger),
         const SizedBox(width: AppSpacing.sm),
         tile(
-          'Most reported',
+          context.tr('Most reported'),
           Text(top ?? '–', maxLines: 1, overflow: TextOverflow.ellipsis,
               style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, height: 1.7)),
           Icons.bug_report_rounded,
@@ -769,7 +785,7 @@ class _HotspotCard extends StatelessWidget {
                           Text(h.barangay, maxLines: 1, overflow: TextOverflow.ellipsis,
                               style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
                           Text(
-                            [h.municipality, if (distanceKm != null) _distance(distanceKm!)].join(' · '),
+                            [h.municipality, if (distanceKm != null) _distance(context, distanceKm!)].join(' · '),
                             style: const TextStyle(color: AppColors.textMuted, fontSize: 12.5),
                           ),
                           const SizedBox(height: 4),
@@ -834,7 +850,7 @@ class _PointRow extends StatelessWidget {
                     style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
                   ),
                   Text(
-                    [p.place, formatRelativeDay(p.createdAt), if (distanceKm != null) _distance(distanceKm!)]
+                    [p.place, formatRelativeDay(p.createdAt), if (distanceKm != null) _distance(context, distanceKm!)]
                         .where((x) => x.isNotEmpty)
                         .join(' · '),
                     maxLines: 1,
@@ -864,7 +880,7 @@ class _Dot extends StatelessWidget {
         children: [
           Container(width: 9, height: 9, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
           const SizedBox(width: 4),
-          Text(label, style: const TextStyle(color: AppColors.textMuted, fontSize: 12)),
+          Text(context.tr(label), style: const TextStyle(color: AppColors.textMuted, fontSize: 12)),
         ],
       );
 }

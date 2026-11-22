@@ -1,7 +1,9 @@
 """Observations (the `scans` table) as the mobile app and dashboard see them.
 
 Status flow: pending -> validated | returned | escalated; escalated -> validated.
-Pest reports get a model result on upload; disease reports never do.
+Pest reports get a model result on upload; disease reports never do. A pest
+report on which the model confidently found no insect at all is closed at
+once as "no_pests" (its photo is deleted; see sync_router.submit_observation).
 """
 from datetime import date, timedelta
 from typing import Optional
@@ -9,7 +11,7 @@ from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from . import land, schema
+from . import i18n, land, schema
 from .detector import PEST_NAMES
 
 FOLLOW_UP_DAYS = 7  # "How is the field now?" appears this long after a treatment
@@ -136,9 +138,16 @@ def shape(r, *, staff: bool = False) -> dict:
         "resubmission_of": r.resubmission_of,
         "resubmitted_as": r.resubmitted_as,
     }
+    detection = getattr(r, "detection_result", "") or ""
+    out["detection_result"] = detection
+    # True when the photo was removed from storage (no pests found).
+    out["image_deleted"] = getattr(r, "image_deleted_at", None) is not None
+    out["location_status"] = getattr(r, "location_status", "") or ""
+    out["gps_barangay_psgc"] = getattr(r, "gps_barangay_psgc", None)
     if is_pest:
         out["ai"] = {
             "status": r.ai_status,
+            "result": detection,
             "pest": r.ai_pest,
             "pest_name": pest_name(r.ai_pest),
             "confidence": r.ai_confidence,
@@ -279,6 +288,19 @@ def notify(db: Session, email: str, scan_id: Optional[int], kind: str, title: st
         ),
         {"e": email, "s": scan_id, "k": kind, "t": title, "b": body},
     )
+
+
+def notify_t(db: Session, email: str, scan_id: Optional[int], kind: str, title_key: str,
+             body_key: Optional[str] = None, body_text: Optional[str] = None, **params) -> None:
+    """A notification written in the recipient's language (app/i18n.py).
+    `body_text` (free text typed by a person, e.g. a return reason) is used
+    as is. {level} params are translated too."""
+    lang = i18n.language_of(db, email)
+    if params.get("level"):
+        params["level"] = i18n.render(f"level.{str(params['level']).upper()}", lang)
+    title = i18n.render(title_key, lang, **params)
+    body = body_text if body_text is not None else (i18n.render(body_key, lang, **params) if body_key else "")
+    notify(db, email, scan_id, kind, title, body)
 
 
 def follow_up_due(applied: date) -> date:

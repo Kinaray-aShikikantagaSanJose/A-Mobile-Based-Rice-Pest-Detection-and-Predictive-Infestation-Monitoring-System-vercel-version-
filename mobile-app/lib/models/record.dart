@@ -1,3 +1,4 @@
+import '../l10n/app_language.dart';
 import '../services/local_store.dart';
 import '../utils/formatters.dart';
 
@@ -18,6 +19,8 @@ class DetectionBox {
 /// The server's automatic analysis (pest reports only).
 class AiResult {
   final String status; // done | failed | skipped
+  /// pests_found | no_pests_found | uncertain | failed | skipped ('' = older server).
+  final String result;
   final String? pest;
   final double? confidence;
   final int? count; // null = not countable
@@ -27,6 +30,7 @@ class AiResult {
 
   const AiResult({
     required this.status,
+    this.result = '',
     this.pest,
     this.confidence,
     this.count,
@@ -37,11 +41,13 @@ class AiResult {
 
   factory AiResult.fromJson(Map<String, dynamic> j) => AiResult(
         status: _s(j['status']),
+        result: _s(j['result']),
         pest: j['pest'] as String?,
         confidence: _d(j['confidence']),
         count: _i(j['count']),
         countable: j['countable'] == true,
-        message: _s(j['message']),
+        // The server's fixed result messages, shown in the chosen language.
+        message: tr(_s(j['message'])),
         detections: [
           for (final b in (j['detections'] as List? ?? const []))
             DetectionBox.fromJson(b as Map<String, dynamic>),
@@ -49,8 +55,13 @@ class AiResult {
       );
 
   bool get recognized => status == 'done' && pest != null;
-  String get pestLabel => pestName(pest, fallback: 'No supported pest recognized');
-  String get confidenceLabel => confidence == null ? '' : '${(confidence! * 100).round()}% sure';
+
+  /// The model confidently found no insect on a clear photo.
+  bool get noPests => result == 'no_pests_found';
+  String get pestLabel =>
+      noPests ? tr('No pests found') : pestName(pest, fallback: 'No supported pest recognized');
+  String get confidenceLabel =>
+      confidence == null ? '' : tr('{n}% sure', {'n': (confidence! * 100).round()});
 }
 
 /// What the technician (or agriculturist) confirmed.
@@ -186,6 +197,7 @@ class Record {
   String get monitoringMethod {
     if (server != null) return _s(server!['monitoring_method']);
     if (isDisease) return '';
+    // Same English values the server stores; screens translate them when shown.
     return pending!.method == 'trap' ? 'Trap-based' : 'Direct field observation';
   }
 
@@ -221,6 +233,16 @@ class Record {
   String get uploadError => pending?.lastError ?? '';
   bool get isMine => server?['is_mine'] != false;
 
+  /// pests_found | no_pests_found | uncertain | failed | skipped ('' = older server).
+  String get detectionResult => _s(server?['detection_result']);
+
+  /// The photo was removed from the server (no pests found); the copy taken
+  /// on this phone, if any, is still shown.
+  bool get imageDeleted => server?['image_deleted'] == true;
+
+  /// Where the GPS point fell: inside | outside_antique | no_gps | '' (older records).
+  String get locationStatus => _s(server?['location_status']);
+
   AiResult? get ai => server?['ai'] is Map ? AiResult.fromJson(server!['ai'] as Map<String, dynamic>) : null;
   Confirmed? get confirmed =>
       server?['confirmed'] is Map ? Confirmed.fromJson(server!['confirmed'] as Map<String, dynamic>) : null;
@@ -245,11 +267,12 @@ class Record {
 
   /// Short title for lists: confirmed pest, else the model result, else the type.
   String get title {
-    if (isDisease) return 'Disease report';
+    if (isDisease) return tr('Disease report');
+    if (status == 'no_pests') return tr('No pests found');
     final c = confirmed;
     if (c != null) return c.pestLabel;
     final a = ai;
     if (a != null && a.recognized) return a.pestLabel;
-    return 'Pest report';
+    return tr('Pest report');
   }
 }

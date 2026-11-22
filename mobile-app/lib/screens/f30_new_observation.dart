@@ -8,8 +8,11 @@ import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart' as p;
 
 import '../app_router.dart';
+import '../controllers/auth_controller.dart';
+import '../l10n/app_language.dart';
 import '../models/record.dart';
 import '../platform/local_files.dart';
+import '../services/antique_geofence.dart';
 import '../services/api_client.dart';
 import '../services/gps_service.dart';
 import '../services/local_store.dart';
@@ -57,6 +60,10 @@ class _F30NewObservationState extends State<F30NewObservation> {
   String? _type; // pest | disease
   String? _photo;
   GpsResult _gps = const GpsResult(GpsStatus.detecting);
+
+  /// Barangay of the GPS point (offline lookup), shown on the location card
+  /// only. The observation is filed under the person's saved area.
+  GeoMatch? _geo;
   bool _locationConfirmed = false;
   bool _skipLocation = false;
   String? _stage;
@@ -111,7 +118,11 @@ class _F30NewObservationState extends State<F30NewObservation> {
     // The observation starts with the photo: open the camera straight away.
     WidgetsBinding.instance.addPostFrameCallback((_) => _takePhoto());
     // Look for GPS meanwhile so it's ready by the location step.
-    if (!_gps.hasFix) _detectLocation(ask: false);
+    if (!_gps.hasFix) {
+      _detectLocation(ask: false);
+    } else {
+      _lookupPlace(_gps); // a retake's saved location
+    }
     _gpsService = GpsService.serviceStatusStream.listen((on) {
       if (on && !_gps.hasFix) _detectLocation(ask: false);
     });
@@ -186,11 +197,11 @@ class _F30NewObservationState extends State<F30NewObservation> {
     final leave = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Discard this observation?'),
-        content: const Text('The photo you took will not be sent.'),
+        title: Text(ctx.tr('Discard this observation?')),
+        content: Text(ctx.tr('The photo you took will not be sent.')),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Keep going')),
-          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Discard')),
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(ctx.tr('Keep going'))),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: Text(ctx.tr('Discard'))),
         ],
       ),
     );
@@ -226,7 +237,7 @@ class _F30NewObservationState extends State<F30NewObservation> {
       _next();
     } catch (e) {
       debugPrint('[Observation] could not persist camera photo: $e');
-      _snack('Could not save the photo on this device.');
+      if (mounted) _snack(context.tr('Could not save the photo on this device.'));
     }
   }
 
@@ -242,19 +253,36 @@ class _F30NewObservationState extends State<F30NewObservation> {
       setState(() => _photo = dest);
       _next();
     } catch (e) {
-      _snack('Could not open the gallery.');
+      if (mounted) _snack(context.tr('Could not open the gallery.'));
     }
   }
 
   Future<void> _detectLocation({required bool ask}) async {
     setState(() {
       _gps = const GpsResult(GpsStatus.detecting);
+      _geo = null;
       _locationConfirmed = false;
       _landHint = null; // a new location gets a new land type suggestion
       _landHintError = null;
     });
-    final r = await GpsService.getCurrentPosition(requestPermission: ask);
-    if (mounted) setState(() => _gps = r);
+    final r = await GpsService.getCurrentPosition(requestPermission: ask, precise: true);
+    if (!mounted) return;
+    setState(() => _gps = r);
+    if (r.hasFix) _lookupPlace(r);
+  }
+
+  /// Which barangay the fix is in (bundled map, works offline). Only shown
+  /// to the person: it never changes their saved municipality or barangay.
+  Future<void> _lookupPlace(GpsResult gps) async {
+    GeoMatch? match;
+    try {
+      match = await AntiqueGeofence.instance.locate(gps.lat!, gps.lng!, accuracyM: gps.accuracy);
+    } catch (e) {
+      debugPrint('[Observation] barangay lookup failed: $e');
+    }
+    // Ignore a late answer for a location that was replaced meanwhile.
+    if (!mounted || !identical(gps, _gps)) return;
+    setState(() => _geo = match);
   }
 
   /// Looks up the field's elevation once (needs the location and signal) and
@@ -279,6 +307,7 @@ class _F30NewObservationState extends State<F30NewObservation> {
         if (_landType == null && data['suggested'] is String) _landType = data['suggested'] as String;
       });
     } catch (_) {
+      // English key; translated where it is shown.
       if (mounted) setState(() => _landHintError = 'No suggestion right now (no signal). Pick the land type yourself.');
     } finally {
       if (mounted) setState(() => _landHintLoading = false);
@@ -314,19 +343,24 @@ class _F30NewObservationState extends State<F30NewObservation> {
       return;
     }
     final trap = !_isDisease && _method == 'trap';
+    final withLocation = _gps.hasFix && !_skipLocation;
     final ok = await confirmAction(
       context,
-      title: _isDisease ? 'Send this disease report?' : 'Send this observation?',
+      title: _isDisease ? context.tr('Send this disease report?') : context.tr('Send this observation?'),
       message: _isDisease
-          ? 'A technician will review your photo and description.'
-          : 'The app will check the photo for pests, then a technician confirms the result.',
-      confirmLabel: 'Yes, send it',
+          ? context.tr('A technician will review your photo and description.')
+          : context.tr('The app will check the photo for pests, then a technician confirms the result.'),
+      confirmLabel: context.tr('Yes, send it'),
       summary: [
-        ('Report', _isDisease ? 'Disease report' : 'Pest report'),
-        ('Land type', landTypeLabel(_landType)),
-        ('Crop stage', _stage!),
-        ('Location', _gps.hasFix && !_skipLocation ? 'Included' : 'Not included'),
-        if (!_isDisease) ('Checked by', trap ? 'Trap-based' : 'Direct field observation'),
+        (context.tr('Report'), _isDisease ? context.tr('Disease report') : context.tr('Pest report')),
+        (context.tr('Land type'), landTypeLabel(_landType)),
+        (context.tr('Crop stage'), context.tr(_stage!)), // stage key -> its label
+        (context.tr('Location'), withLocation ? context.tr('Included') : context.tr('Not included')),
+        if (!_isDisease)
+          (
+            context.tr('Checked by'),
+            trap ? context.tr('Trap-based') : context.tr('Direct field observation'),
+          ),
       ],
     );
     if (!ok || !mounted) return;
@@ -335,8 +369,9 @@ class _F30NewObservationState extends State<F30NewObservation> {
       clientUuid: newClientUuid(),
       reportType: _type!,
       imagePath: _photo!,
-      lat: _gps.hasFix && !_skipLocation ? _gps.lat : null,
-      lng: _gps.hasFix && !_skipLocation ? _gps.lng : null,
+      lat: withLocation ? _gps.lat : null,
+      lng: withLocation ? _gps.lng : null,
+      gpsAccuracyM: withLocation ? _gps.accuracy : null,
       cropStage: _stage!,
       method: _isDisease ? 'direct' : _method,
       trapType: trap ? (_trapType ?? '') : '',
@@ -376,13 +411,13 @@ class _F30NewObservationState extends State<F30NewObservation> {
             children: [
               AppHeader(
                 title: _isRetake
-                    ? 'Retake photo'
+                    ? context.tr('Retake photo')
                     : _isFollowUp
-                        ? 'Follow-up check'
+                        ? context.tr('Follow-up check')
                         : widget.args.presetType == 'disease'
-                            ? 'Disease report'
-                            : 'New Observation',
-                subtitle: 'Step $index of ${steps.length}',
+                            ? context.tr('Disease report')
+                            : context.tr('New Observation'),
+                subtitle: context.tr('Step {n} of {total}', {'n': index, 'total': steps.length}),
                 onBack: () async {
                   if (await _back() && context.mounted) context.pop();
                 },
@@ -413,19 +448,19 @@ class _F30NewObservationState extends State<F30NewObservation> {
     switch (_step) {
       case _Step.type:
         return [
-          const _Question('What are you reporting?'),
+          _Question(context.tr('What are you reporting?')),
           ChoiceTile(
             icon: Icons.bug_report_rounded,
-            title: 'Pest report',
-            subtitle: 'Insects, eggs, or plants they have damaged. The app looks for insects in your photo.',
+            title: context.tr('Pest report'),
+            subtitle: context.tr('Insects, eggs, or plants they have damaged. The app looks for insects in your photo.'),
             selected: _type == 'pest',
             onTap: () => _pickType('pest'),
           ),
           const SizedBox(height: AppSpacing.md),
           ChoiceTile(
             icon: Icons.coronavirus_outlined,
-            title: 'Disease report',
-            subtitle: 'Spots, discolored or dying leaves, strange growth. A technician checks it.',
+            title: context.tr('Disease report'),
+            subtitle: context.tr('Spots, discolored or dying leaves, strange growth. A technician checks it.'),
             selected: _type == 'disease',
             onTap: () => _pickType('disease'),
           ),
@@ -435,10 +470,10 @@ class _F30NewObservationState extends State<F30NewObservation> {
         return [
           if (_isFollowUp) _FollowUpBanner(label: widget.args.followUpLabel),
           if (_isRetake) _RetakeBanner(original: _retakeOf!),
-          const _Question('Take a clear photo'),
-          const Text(
-            'Get close so the insects or damage fill the picture. Hold the phone steady.',
-            style: TextStyle(color: AppColors.textSecondary, fontSize: 15, height: 1.4),
+          _Question(context.tr('Take a clear photo')),
+          Text(
+            context.tr('Get close so the insects or damage fill the picture. Hold the phone steady.'),
+            style: const TextStyle(color: AppColors.textSecondary, fontSize: 15, height: 1.4),
           ),
           const SizedBox(height: AppSpacing.lg),
           if (_photo != null) ...[
@@ -456,11 +491,11 @@ class _F30NewObservationState extends State<F30NewObservation> {
               ),
             ),
             const SizedBox(height: AppSpacing.lg),
-            AppPrimaryButton(label: 'Use this photo', icon: Icons.check_rounded, onPressed: _next),
+            AppPrimaryButton(label: context.tr('Use this photo'), icon: Icons.check_rounded, onPressed: _next),
             const SizedBox(height: AppSpacing.md),
           ],
           AppSecondaryButton(
-            label: _photo == null ? 'Open the camera' : 'Take it again',
+            label: _photo == null ? context.tr('Open the camera') : context.tr('Take it again'),
             icon: Icons.photo_camera_rounded,
             onPressed: _takePhoto,
           ),
@@ -468,18 +503,18 @@ class _F30NewObservationState extends State<F30NewObservation> {
           TextButton.icon(
             onPressed: _pickFromGallery,
             icon: const Icon(Icons.photo_library_outlined),
-            label: const Text('Choose a photo from the gallery instead'),
+            label: Text(context.tr('Choose a photo from the gallery instead')),
           ),
         ];
 
       case _Step.location:
         return [
-          const _Question('Is this your field?'),
-          _LocationCard(gps: _gps, onRetry: () => _detectLocation(ask: true)),
+          _Question(context.tr('Is this your field?')),
+          _LocationCard(gps: _gps, geo: _geo, onRetry: () => _detectLocation(ask: true)),
           const SizedBox(height: AppSpacing.lg),
           if (_gps.hasFix) ...[
             AppPrimaryButton(
-              label: 'Yes, this is my field',
+              label: context.tr('Yes, this is my field'),
               icon: Icons.check_rounded,
               onPressed: () {
                 setState(() {
@@ -491,13 +526,13 @@ class _F30NewObservationState extends State<F30NewObservation> {
             ),
             const SizedBox(height: AppSpacing.md),
             AppSecondaryButton(
-              label: 'No, find my location again',
+              label: context.tr('No, find my location again'),
               icon: Icons.my_location_rounded,
               onPressed: () => _detectLocation(ask: true),
             ),
           ] else if (_gps.status != GpsStatus.detecting) ...[
             AppSecondaryButton(
-              label: 'Continue without location',
+              label: context.tr('Continue without location'),
               onPressed: () {
                 setState(() => _skipLocation = true);
                 _next();
@@ -510,29 +545,32 @@ class _F30NewObservationState extends State<F30NewObservation> {
         final hint = _landHint;
         final group = hint?['group'] as String?;
         return [
-          const _Question('What kind of land is this field?'),
+          _Question(context.tr('What kind of land is this field?')),
           if (_landHintLoading)
-            const AppCard(
+            AppCard(
               child: Row(
                 children: [
-                  Icon(Icons.terrain_rounded, color: AppColors.primary),
-                  SizedBox(width: AppSpacing.md),
-                  Expanded(child: Text('Checking the elevation of your field…', style: TextStyle(fontSize: 14.5))),
+                  const Icon(Icons.terrain_rounded, color: AppColors.primary),
+                  const SizedBox(width: AppSpacing.md),
+                  Expanded(
+                    child: Text(context.tr('Checking the elevation of your field…'),
+                        style: const TextStyle(fontSize: 14.5)),
+                  ),
                 ],
               ),
             )
           else if (hint != null && group != null)
-            InfoBanner(icon: Icons.terrain_rounded, color: AppColors.primary, message: '${hint['reason']}')
+            InfoBanner(icon: Icons.terrain_rounded, color: AppColors.primary, message: _landHintReason(hint))
           else if (_landHintError != null || hint != null)
             InfoBanner(
               icon: Icons.terrain_rounded,
               color: AppColors.textSecondary,
-              message: _landHintError ?? '${hint!['reason']}',
+              message: _landHintError != null ? context.tr(_landHintError!) : _landHintReason(hint!),
             )
           else if (!_gps.hasFix || _skipLocation)
-            const Text(
-              'Without a location the app can\'t suggest one. Pick the land type yourself.',
-              style: TextStyle(color: AppColors.textSecondary, fontSize: 14.5, height: 1.4),
+            Text(
+              context.tr('Without a location the app can\'t suggest one. Pick the land type yourself.'),
+              style: const TextStyle(color: AppColors.textSecondary, fontSize: 14.5, height: 1.4),
             ),
           const SizedBox(height: AppSpacing.lg),
           for (final (i, (key, label, help)) in kLandTypes.indexed) ...[
@@ -540,7 +578,7 @@ class _F30NewObservationState extends State<F30NewObservation> {
             ChoiceTile(
               icon: const [Icons.landscape_rounded, Icons.water_drop_outlined, Icons.water_rounded][i],
               title: (group == 'upland' && key == 'upland') || (group == 'lowland' && key != 'upland')
-                  ? '$label (suggested)'
+                  ? context.tr('{label} (suggested)', {'label': label})
                   : label,
               subtitle: help,
               selected: _landType == key,
@@ -548,20 +586,20 @@ class _F30NewObservationState extends State<F30NewObservation> {
             ),
           ],
           const SizedBox(height: AppSpacing.md),
-          const Text(
-            'The suggestion comes from the elevation only. Change it if your field is different.',
-            style: TextStyle(color: AppColors.textMuted, fontSize: 13, height: 1.4),
+          Text(
+            context.tr('The suggestion comes from the elevation only. Change it if your field is different.'),
+            style: const TextStyle(color: AppColors.textMuted, fontSize: 13, height: 1.4),
           ),
         ];
 
       case _Step.stage:
         return [
-          const _Question('What stage is the rice?'),
+          _Question(context.tr('What stage is the rice?')),
           for (final (i, stage) in kCropStages.indexed) ...[
             if (i > 0) const SizedBox(height: AppSpacing.md),
             ChoiceTile(
               icon: const [Icons.grass_rounded, Icons.local_florist_rounded, Icons.grain_rounded][i],
-              title: stage,
+              title: context.tr(stage), // the stored value stays English
               subtitle: kCropStageHints[stage],
               selected: _stage == stage,
               onTap: () => _pickStage(stage),
@@ -571,50 +609,50 @@ class _F30NewObservationState extends State<F30NewObservation> {
 
       case _Step.method:
         return [
-          const _Question('How did you check?'),
+          _Question(context.tr('How did you check?')),
           ChoiceTile(
             icon: Icons.visibility_rounded,
-            title: 'Direct field observation',
-            subtitle: 'I looked at the plants',
+            title: context.tr('Direct field observation'),
+            subtitle: context.tr('I looked at the plants'),
             selected: _method == 'direct',
             onTap: () => setState(() => _method = 'direct'),
           ),
           const SizedBox(height: AppSpacing.md),
           ChoiceTile(
             icon: Icons.lightbulb_outline_rounded,
-            title: 'Trap-based',
-            subtitle: 'From a sticky trap, light trap or lure',
+            title: context.tr('Trap-based'),
+            subtitle: context.tr('From a sticky trap, light trap or lure'),
             selected: _method == 'trap',
             onTap: () => setState(() => _method = 'trap'),
           ),
           if (_method == 'trap') ...[
             const SizedBox(height: AppSpacing.lg),
-            const Text(
-              'Optional: add these only if you know them. The app never decides them on its own.',
-              style: TextStyle(color: AppColors.textSecondary, fontSize: 14, height: 1.4),
+            Text(
+              context.tr('Optional: add these only if you know them. The app never decides them on its own.'),
+              style: const TextStyle(color: AppColors.textSecondary, fontSize: 14, height: 1.4),
             ),
             const SizedBox(height: AppSpacing.md),
-            _Dropdown(label: 'Trap or lure type', value: _trapType, options: kTrapTypes,
+            _Dropdown(label: context.tr('Trap or lure type'), value: _trapType, options: kTrapTypes,
                 onChanged: (v) => setState(() => _trapType = v)),
             const SizedBox(height: AppSpacing.md),
-            _Dropdown(label: 'Target pest', value: _targetPest, options: kTargetPests,
+            _Dropdown(label: context.tr('Target pest'), value: _targetPest, options: kTargetPests,
                 onChanged: (v) => setState(() => _targetPest = v)),
             const SizedBox(height: AppSpacing.md),
-            _Dropdown(label: 'Target sex (if known)', value: _targetSex, options: kTargetSexes,
+            _Dropdown(label: context.tr('Target sex (if known)'), value: _targetSex, options: kTargetSexes,
                 onChanged: (v) => setState(() => _targetSex = v)),
           ],
           const SizedBox(height: AppSpacing.xl),
-          AppPrimaryButton(label: 'Continue', onPressed: _next),
+          AppPrimaryButton(label: context.tr('Continue'), onPressed: _next),
         ];
 
       case _Step.notes:
         final required = _isDisease;
         return [
-          _Question(required ? 'Describe what you see' : 'Anything to add?'),
+          _Question(required ? context.tr('Describe what you see') : context.tr('Anything to add?')),
           Text(
             required
-                ? 'Required. For example: color of the spots, which part of the plant, how much of the field.'
-                : 'Optional. For example: how many plants are affected, what you noticed.',
+                ? context.tr('Required. For example: color of the spots, which part of the plant, how much of the field.')
+                : context.tr('Optional. For example: how many plants are affected, what you noticed.'),
             style: const TextStyle(color: AppColors.textSecondary, fontSize: 15, height: 1.4),
           ),
           const SizedBox(height: AppSpacing.md),
@@ -624,12 +662,14 @@ class _F30NewObservationState extends State<F30NewObservation> {
             maxLines: 8,
             maxLength: 1000,
             textCapitalization: TextCapitalization.sentences,
-            decoration: InputDecoration(hintText: required ? 'What you observed…' : 'Notes (optional)'),
+            decoration: InputDecoration(
+              hintText: required ? context.tr('What you observed…') : context.tr('Notes (optional)'),
+            ),
             onChanged: (_) => setState(() {}),
           ),
           const SizedBox(height: AppSpacing.lg),
           AppPrimaryButton(
-            label: required || _notes.text.trim().isNotEmpty ? 'Continue' : 'Skip',
+            label: required || _notes.text.trim().isNotEmpty ? context.tr('Continue') : context.tr('Skip'),
             onPressed: required && _notes.text.trim().length < 3 ? null : _next,
           ),
         ];
@@ -637,7 +677,7 @@ class _F30NewObservationState extends State<F30NewObservation> {
       case _Step.review:
         final trap = !_isDisease && _method == 'trap';
         return [
-          const _Question('Ready to send?'),
+          _Question(context.tr('Ready to send?')),
           if (_isFollowUp) _FollowUpBanner(label: widget.args.followUpLabel),
           if (_isRetake) _RetakeBanner(original: _retakeOf!),
           AppCard(
@@ -653,26 +693,40 @@ class _F30NewObservationState extends State<F30NewObservation> {
                   padding: const EdgeInsets.all(AppSpacing.lg),
                   child: Column(
                     children: [
-                      _SummaryRow('Photo', 'Taken', onEdit: () => _edit(_Step.photo)),
+                      _SummaryRow(context.tr('Photo'), context.tr('Taken'), onEdit: () => _edit(_Step.photo)),
                       _SummaryRow(
-                        'Location',
-                        _gps.hasFix && !_skipLocation && _locationConfirmed ? 'Field confirmed on the map' : 'Not included',
+                        context.tr('Location'),
+                        _gps.hasFix && !_skipLocation && _locationConfirmed
+                            ? context.tr('Field confirmed on the map')
+                            : context.tr('Not included'),
                         onEdit: () => _edit(_Step.location),
                       ),
-                      _SummaryRow('Land type', _landType == null ? '—' : landTypeLabel(_landType),
+                      _SummaryRow(context.tr('Land type'), _landType == null ? '—' : landTypeLabel(_landType),
                           onEdit: () => _edit(_Step.land)),
-                      _SummaryRow('Crop stage', _stage ?? '—', onEdit: () => _edit(_Step.stage)),
-                      _SummaryRow('Report', _type == null ? '—' : _isDisease ? 'Disease report' : 'Pest report',
+                      _SummaryRow(context.tr('Crop stage'), _stage == null ? '—' : context.tr(_stage!),
+                          onEdit: () => _edit(_Step.stage)),
+                      _SummaryRow(
+                          context.tr('Report'),
+                          _type == null
+                              ? '—'
+                              : _isDisease
+                                  ? context.tr('Disease report')
+                                  : context.tr('Pest report'),
                           onEdit: _typeFixed ? null : () => _edit(_Step.type)),
                       if (!_isDisease)
                         _SummaryRow(
-                          'Checked by',
+                          context.tr('Checked by'),
                           trap
-                              ? ['Trap-based', _trapType, _targetPest, _targetSex].whereType<String>().join(' · ')
-                              : 'Direct field observation',
+                              // Option values stay English; only their display is translated.
+                              ? [
+                                  context.tr('Trap-based'),
+                                  for (final v in [_trapType, _targetPest, _targetSex])
+                                    if (v != null) context.tr(v),
+                                ].join(' · ')
+                              : context.tr('Direct field observation'),
                           onEdit: () => _edit(_Step.method),
                         ),
-                      _SummaryRow('Notes', _notes.text.trim().isEmpty ? '—' : _notes.text.trim(),
+                      _SummaryRow(context.tr('Notes'), _notes.text.trim().isEmpty ? '—' : _notes.text.trim(),
                           onEdit: () => _edit(_Step.notes)),
                     ],
                   ),
@@ -682,18 +736,38 @@ class _F30NewObservationState extends State<F30NewObservation> {
           ),
           const SizedBox(height: AppSpacing.xl),
           AppPrimaryButton(
-            label: 'Submit',
+            label: context.tr('Submit'),
             icon: Icons.send_rounded,
             onPressed: _submit,
           ),
           const SizedBox(height: AppSpacing.md),
-          const Text(
-            'No signal? That\'s fine. It is saved on your phone and sent when you are back in coverage.',
+          Text(
+            context.tr('No signal? That\'s fine. It is saved on your phone and sent when you are back in coverage.'),
             textAlign: TextAlign.center,
-            style: TextStyle(color: AppColors.textMuted, fontSize: 13, height: 1.4),
+            style: const TextStyle(color: AppColors.textMuted, fontSize: 13, height: 1.4),
           ),
         ];
     }
+  }
+
+  /// The server's land type reason, in the chosen language. It contains the
+  /// elevation, so the translation is rebuilt from the same parts
+  /// (rice-pest-api/app/land.py); English shows the server's text as is.
+  String _landHintReason(Map<String, dynamic> hint) {
+    final reason = '${hint['reason']}';
+    if (context.lang == AppLang.en) return reason;
+    final n = (hint['elevation_m'] as num?)?.round();
+    if (n != null && hint['group'] == 'upland') {
+      return context.tr(
+          'About {n} m above sea level, which suggests upland. Change it if the field is a flooded paddy.', {'n': n});
+    }
+    if (n != null && hint['group'] == 'lowland') {
+      return context.tr(
+          'About {n} m above sea level, which suggests lowland. '
+          'Pick rainfed or irrigated depending on where the water comes from.',
+          {'n': n});
+    }
+    return context.tr(reason); // e.g. "Elevation could not be looked up. …"
   }
 }
 
@@ -763,8 +837,10 @@ class _FollowUpBanner extends StatelessWidget {
               const SizedBox(width: AppSpacing.md),
               Expanded(
                 child: Text(
-                  'How is the field now? This photo will be linked to '
-                  '${label == null || label!.isEmpty ? 'your treatment' : '"$label"'}.',
+                  label == null || label!.isEmpty
+                      ? context.tr('How is the field now? This photo will be linked to your treatment.')
+                      : context.tr('How is the field now? This photo will be linked to "{treatment}".',
+                          {'treatment': label}),
                   style: const TextStyle(fontSize: 14, height: 1.4),
                 ),
               ),
@@ -781,6 +857,13 @@ class _RetakeBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final reason = original.returnReason.trim();
+    final what = original.isDisease
+        ? context.tr('New photo for your disease report')
+        : context.tr('New photo for your pest report');
+    final number = original.id == null ? '' : ' #${original.id}';
+    final why = reason.isEmpty
+        ? context.tr('The technician could not see it clearly.')
+        : context.tr('The technician said: "{reason}"', {'reason': reason});
     return Padding(
       padding: const EdgeInsets.only(bottom: AppSpacing.lg),
       child: AppCard(
@@ -791,12 +874,7 @@ class _RetakeBanner extends StatelessWidget {
             const Icon(Icons.replay_rounded, color: AppColors.primary),
             const SizedBox(width: AppSpacing.md),
             Expanded(
-              child: Text(
-                'New photo for your ${original.isDisease ? 'disease' : 'pest'} report'
-                '${original.id == null ? '' : ' #${original.id}'}. '
-                '${reason.isEmpty ? 'The technician could not see it clearly.' : 'The technician said: "$reason"'}',
-                style: const TextStyle(fontSize: 14, height: 1.4),
-              ),
+              child: Text('$what$number. $why', style: const TextStyle(fontSize: 14, height: 1.4)),
             ),
           ],
         ),
@@ -807,49 +885,68 @@ class _RetakeBanner extends StatelessWidget {
 
 class _LocationCard extends StatelessWidget {
   final GpsResult gps;
+
+  /// Barangay lookup for the fix (null while looking or when it failed).
+  final GeoMatch? geo;
   final VoidCallback onRetry;
-  const _LocationCard({required this.gps, required this.onRetry});
+  const _LocationCard({required this.gps, this.geo, required this.onRetry});
 
   @override
   Widget build(BuildContext context) {
     if (gps.status == GpsStatus.detecting) {
-      return const AppCard(
+      return AppCard(
         child: Row(
           children: [
-            SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.5)),
-            SizedBox(width: AppSpacing.md),
-            Expanded(child: Text('Finding your location…', style: TextStyle(fontSize: 15))),
+            const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.5)),
+            const SizedBox(width: AppSpacing.md),
+            Expanded(child: Text(context.tr('Finding your location…'), style: const TextStyle(fontSize: 15))),
           ],
         ),
       );
     }
     if (gps.hasFix) {
+      final lines = _placeLines(context);
+      // The map keeps its place in the tree when the status arrives, so it
+      // is not rebuilt.
       return ClipRRect(
         borderRadius: BorderRadius.circular(AppRadius.md),
-        child: ScanMap(
-          markers: [ScanMarker(lat: gps.lat!, lng: gps.lng!)],
-          height: 280,
-          zoom: 16,
-          interactive: true,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            ScanMap(
+              markers: [ScanMarker(lat: gps.lat!, lng: gps.lng!)],
+              height: 280,
+              zoom: 16,
+              interactive: true,
+            ),
+            if (lines.isNotEmpty)
+              ColoredBox(
+                color: AppColors.surface,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(AppSpacing.md, 10, AppSpacing.md, AppSpacing.md),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: lines),
+                ),
+              ),
+          ],
         ),
       );
     }
     final String why = switch (gps.status) {
-      GpsStatus.serviceDisabled => 'Location is turned off on your phone. Turn it on and we will try again.',
+      GpsStatus.serviceDisabled => context.tr('Location is turned off on your phone. Turn it on and we will try again.'),
       GpsStatus.permissionDenied => gps.deniedForever
-          ? 'Location permission is blocked for this app. You can allow it in your phone settings.'
-          : 'The app needs permission to use your location.',
-      _ => 'We could not get your location. Move to an open area and try again.',
+          ? context.tr('Location permission is blocked for this app. You can allow it in your phone settings.')
+          : context.tr('The app needs permission to use your location.'),
+      _ => context.tr('We could not get your location. Move to an open area and try again.'),
     };
     return AppCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Row(
+          Row(
             children: [
-              Icon(Icons.location_off_rounded, color: AppColors.orange),
-              SizedBox(width: AppSpacing.sm),
-              Text('No location yet', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              const Icon(Icons.location_off_rounded, color: AppColors.orange),
+              const SizedBox(width: AppSpacing.sm),
+              Text(context.tr('No location yet'), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
             ],
           ),
           const SizedBox(height: AppSpacing.sm),
@@ -857,11 +954,11 @@ class _LocationCard extends StatelessWidget {
           const SizedBox(height: AppSpacing.md),
           Row(
             children: [
-              AppPrimaryButton(label: 'Try again', compact: true, expanded: false, onPressed: onRetry),
+              AppPrimaryButton(label: context.tr('Try again'), compact: true, expanded: false, onPressed: onRetry),
               if (gps.deniedForever) ...[
                 const SizedBox(width: AppSpacing.sm),
                 AppSecondaryButton(
-                  label: 'Open settings',
+                  label: context.tr('Open settings'),
                   compact: true,
                   expanded: false,
                   onPressed: GpsService.openAppSettings,
@@ -873,6 +970,120 @@ class _LocationCard extends StatelessWidget {
       ),
     );
   }
+
+  /// Where the fix is (barangay, municipality), how sure, and whether it is
+  /// an older position. Shown only; the observation is still filed under the
+  /// person's saved barangay. Nothing extra when the lookup failed.
+  List<Widget> _placeLines(BuildContext context) {
+    final m = geo;
+    final place = m?.place;
+    final accuracy = gps.accuracy?.round();
+    final lines = <Widget>[];
+    switch (m?.status) {
+      case GeoStatus.inside when place != null:
+        lines.add(_PlaceLine(
+          icon: Icons.place_rounded,
+          color: AppColors.primary,
+          strong: true,
+          text: context.tr('In {barangay}, {municipality}',
+              {'barangay': place.barangay, 'municipality': place.municipality}),
+        ));
+        if (accuracy != null) {
+          lines.add(_PlaceLine(
+            icon: Icons.gps_fixed_rounded,
+            text: context.tr('GPS accuracy about {n} m', {'n': accuracy}),
+          ));
+        }
+      case GeoStatus.nearBoundary || GeoStatus.nearest when place != null:
+        lines.add(_PlaceLine(
+          icon: Icons.place_outlined,
+          color: AppColors.orange,
+          strong: true,
+          text: context.tr('Near {barangay}, {municipality}',
+              {'barangay': place.barangay, 'municipality': place.municipality}),
+        ));
+        lines.add(_PlaceLine(
+          icon: Icons.info_outline_rounded,
+          text: context.tr('Close to a barangay boundary.'),
+        ));
+      case GeoStatus.inaccurate:
+        lines.add(_PlaceLine(
+          icon: Icons.gps_not_fixed_rounded,
+          color: AppColors.orange,
+          text: context.tr(
+            'The GPS is not accurate yet (about {n} m). Move to an open area and tap Try again.',
+            {'n': (m!.accuracyM ?? gps.accuracy ?? 0).round()},
+          ),
+        ));
+        lines.add(Padding(
+          padding: const EdgeInsets.only(top: AppSpacing.xs, left: 26),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: AppSecondaryButton(
+              label: context.tr('Try again'),
+              icon: Icons.my_location_rounded,
+              compact: true,
+              expanded: false,
+              onPressed: onRetry,
+            ),
+          ),
+        ));
+      case GeoStatus.outside:
+        final session = AuthControllerImpl.instance.session;
+        final saved = [session?.barangay ?? '', session?.municipality ?? '']
+            .where((s) => s.trim().isNotEmpty)
+            .join(', ');
+        lines.add(_PlaceLine(
+          icon: Icons.wrong_location_outlined,
+          color: AppColors.orange,
+          text: context.tr(
+            'This location is outside Antique. The observation will still be sent and filed under your saved barangay ({place}).',
+            {'place': saved.isEmpty ? context.tr("your account's area") : saved},
+          ),
+        ));
+      default: // looking up, lookup failed, invalid point: nothing extra
+        break;
+    }
+    if (gps.stale) {
+      lines.add(_PlaceLine(icon: Icons.history_rounded, text: context.tr('Using your last known location.')));
+    }
+    return lines;
+  }
+}
+
+/// One compact line on the location card: small icon + text.
+class _PlaceLine extends StatelessWidget {
+  final IconData icon;
+  final String text;
+  final Color color;
+  final bool strong;
+  const _PlaceLine({required this.icon, required this.text, this.color = AppColors.textMuted, this.strong = false});
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.only(top: 4),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(top: 1),
+              child: Icon(icon, size: 18, color: color),
+            ),
+            const SizedBox(width: AppSpacing.sm),
+            Expanded(
+              child: Text(
+                text,
+                style: TextStyle(
+                  fontSize: strong ? 15 : 13.5,
+                  height: 1.35,
+                  fontWeight: strong ? FontWeight.w700 : FontWeight.normal,
+                  color: strong ? AppColors.textPrimary : AppColors.textSecondary,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
 }
 
 class _Dropdown extends StatelessWidget {
@@ -889,8 +1100,9 @@ class _Dropdown extends StatelessWidget {
         isExpanded: true,
         decoration: InputDecoration(labelText: label),
         items: [
-          const DropdownMenuItem<String>(value: null, child: Text('Not specified')),
-          for (final o in options) DropdownMenuItem<String>(value: o, child: Text(o)),
+          DropdownMenuItem<String>(value: null, child: Text(context.tr('Not specified'))),
+          // The value stays English (stored and sent); only the text is translated.
+          for (final o in options) DropdownMenuItem<String>(value: o, child: Text(context.tr(o))),
         ],
         onChanged: onChanged,
       );
@@ -917,10 +1129,10 @@ class _SummaryRow extends StatelessWidget {
               InkWell(
                 onTap: onEdit,
                 borderRadius: BorderRadius.circular(AppRadius.sm),
-                child: const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  child: Text('Change',
-                      style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.bold, fontSize: 13.5)),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  child: Text(context.tr('Change'),
+                      style: const TextStyle(color: AppColors.primary, fontWeight: FontWeight.bold, fontSize: 13.5)),
                 ),
               ),
           ],

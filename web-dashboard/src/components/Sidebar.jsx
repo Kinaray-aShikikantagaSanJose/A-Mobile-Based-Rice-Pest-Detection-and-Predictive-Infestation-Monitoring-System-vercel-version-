@@ -1,4 +1,5 @@
-﻿import { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useT } from '../i18n/index.jsx';
 import { ROLE_LABELS } from '../lib.js';
 import Avatar from './Avatar.jsx';
 import { Logo } from './Brand.jsx';
@@ -20,6 +21,7 @@ const countLabel = (n) => (n > 99 ? '99+' : String(n));
  * it opens as a drawer from the top bar's menu button.
  */
 export default function Sidebar({ groups, currentId, badges, viewer, collapsed, onToggle, onNavigate, onSignOut, mobileOpen, onCloseMobile, freshId }) {
+  const t = useT();
   // Close the drawer with Escape and keep the page behind it still.
   useEffect(() => {
     if (!mobileOpen) return undefined;
@@ -45,13 +47,13 @@ export default function Sidebar({ groups, currentId, badges, viewer, collapsed, 
         </aside>
 
       {mobileOpen && (
-        <div className="fixed inset-0 z-[2100] lg:hidden" role="dialog" aria-modal="true" aria-label="Navigation">
+        <div className="fixed inset-0 z-[2100] lg:hidden" role="dialog" aria-modal="true" aria-label={t('Navigation')}>
           <div className="absolute inset-0 animate-fade-in bg-black/50 backdrop-blur-[2px]" onClick={onCloseMobile} />
           <aside className="relative flex h-full w-[284px] max-w-[85vw] animate-slide-in flex-col bg-brand-900 text-brand-100 shadow-2xl">
             <button
               type="button"
               onClick={onCloseMobile}
-              aria-label="Close menu"
+              aria-label={t('Close menu')}
               className="absolute right-3 top-5 rounded-lg p-1.5 text-brand-100/80 hover:bg-white/10 hover:text-white"
             >
               <Icon name="x" />
@@ -72,6 +74,7 @@ export default function Sidebar({ groups, currentId, badges, viewer, collapsed, 
 }
 
 function SidebarBody({ groups, currentId, badges, viewer, collapsed, onNavigate, onSignOut, freshId }) {
+  const t = useT();
   // Collapsed items show their label in a tooltip next to the rail. The nav
   // scrolls, which would clip a CSS tooltip, so it is placed with fixed position.
   const [tip, setTip] = useState(null);
@@ -93,7 +96,7 @@ function SidebarBody({ groups, currentId, badges, viewer, collapsed, onNavigate,
             <div className="truncate text-[17px] font-extrabold tracking-tight text-white">
               Palay <span className="text-gold-400">Patrol</span>
             </div>
-            <div className="truncate text-xs text-brand-100/60">Web dashboard</div>
+            <div className="truncate text-xs text-brand-100/60">{t('Web dashboard')}</div>
           </div>
         )}
       </div>
@@ -104,7 +107,7 @@ function SidebarBody({ groups, currentId, badges, viewer, collapsed, onNavigate,
             {collapsed ? (
               gi > 0 && <div className="mx-auto mb-3 h-px w-8 bg-white/10" />
             ) : (
-              <div className="px-3 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-brand-100/45">{g.group}</div>
+              <div className="px-3 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-brand-100/45">{t(g.group)}</div>
             )}
             <div className="space-y-1">
               {g.items.map((i) => {
@@ -112,17 +115,18 @@ function SidebarBody({ groups, currentId, badges, viewer, collapsed, onNavigate,
                 const count = i.badge ? badges[i.badge] || 0 : 0;
                 // New submissions since the person last opened this page.
                 const isNew = i.id === freshId;
+                const label = t(i.label);
                 return (
                   <button
                     key={i.id}
                     type="button"
                     onClick={() => onNavigate(i.id)}
-                    onMouseEnter={(e) => showTip(e, count ? `${i.label} (${count})` : i.label)}
+                    onMouseEnter={(e) => showTip(e, count ? `${label} (${count})` : label)}
                     onMouseLeave={hideTip}
-                    onFocus={(e) => showTip(e, count ? `${i.label} (${count})` : i.label)}
+                    onFocus={(e) => showTip(e, count ? `${label} (${count})` : label)}
                     onBlur={hideTip}
                     aria-current={active ? 'page' : undefined}
-                    aria-label={collapsed ? i.label : undefined}
+                    aria-label={collapsed ? label : undefined}
                     className={`group relative flex w-full items-center rounded-xl py-2.5 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-400/70 ${
                       collapsed ? 'justify-center px-0' : 'gap-3 px-3'
                     } ${active ? 'bg-white/[0.12] text-white' : 'text-brand-100/80 hover:bg-white/[0.06] hover:text-white'}`}
@@ -145,8 +149,8 @@ function SidebarBody({ groups, currentId, badges, viewer, collapsed, onNavigate,
                         </span>
                       )}
                     </span>
-                    {!collapsed && <span className="flex-1 truncate text-left">{i.label}</span>}
-                    {!collapsed && isNew && <span className="rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wide text-white">New</span>}
+                    {!collapsed && <span className="flex-1 truncate text-left">{label}</span>}
+                    {!collapsed && isNew && <span className="rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wide text-white">{t('New')}</span>}
                     {!collapsed && count > 0 && (
                       <span className="rounded-full bg-orange-500 px-2 py-0.5 text-[11px] font-bold text-white">{countLabel(count)}</span>
                     )}
@@ -167,18 +171,18 @@ function SidebarBody({ groups, currentId, badges, viewer, collapsed, onNavigate,
             <div className="min-w-0 flex-1">
               <div className="truncate text-sm font-semibold text-white">{name}</div>
               <div className="truncate text-xs text-brand-100/60">
-                {ROLE_LABELS[viewer.role]}
-                {viewer.role === 'technician' && ` Â· ${viewer.area_label || 'no coverage set'}`}
+                {t(ROLE_LABELS[viewer.role])}
+                {viewer.role === 'technician' && ` · ${viewer.area_label || t('no coverage set')}`}
               </div>
             </div>
           )}
           <button
             type="button"
             onClick={onSignOut}
-            onMouseEnter={(e) => showTip(e, 'Sign out')}
+            onMouseEnter={(e) => showTip(e, t('Sign out'))}
             onMouseLeave={hideTip}
-            aria-label="Sign out"
-            title={collapsed ? undefined : 'Sign out'}
+            aria-label={t('Sign out')}
+            title={collapsed ? undefined : t('Sign out')}
             className="rounded-lg p-2 text-brand-100/70 transition hover:bg-white/10 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-400/70"
           >
             <Icon name="logout" className="h-[18px] w-[18px]" />

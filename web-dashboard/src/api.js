@@ -193,7 +193,8 @@ async function errorMessage(res) {
 async function request(path, options = {}, retried = false) {
   // `form` (FormData) is sent as multipart; the browser sets its boundary.
   const { method = 'GET', body, form, params, raw = false, timeout } = options;
-  const headers = {};
+  // X-Palay-Client: shown as the app in the activity log.
+  const headers = { 'X-Palay-Client': 'dashboard' };
   if (token) headers.Authorization = `Bearer ${token}`;
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   const res = await fetchWithTimeout(
@@ -258,9 +259,39 @@ function photoForm(file) {
   return form;
 }
 
+/**
+ * Ends the sign-in session on the server (its tokens stop working), then
+ * forgets it here. Never throws: signing out works offline too.
+ */
+export async function logout() {
+  const access = token;
+  const refresh = refreshToken;
+  clearSession();
+  if (!access && !refresh) return;
+  try {
+    await fetchWithTimeout(
+      `${API}/auth/logout`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Palay-Client': 'dashboard',
+          ...(access ? { Authorization: `Bearer ${access}` } : {}),
+        },
+        body: JSON.stringify({ refresh_token: refresh || null }),
+      },
+      8000,
+    );
+  } catch {
+    /* offline: the session simply expires */
+  }
+}
+
 export const api = {
   login: (email, password) => request('/auth/login', { method: 'POST', body: { email, password } }),
   me: () => request('/dashboard/me'),
+  // en | fil | krj, saved on the account (also used for its notifications).
+  setLanguage: (code) => request('/auth/me', { method: 'PUT', body: { preferred_language: code } }),
 
   overview: () => request('/analytics/overview'),
   hotspots: (params) => request('/analytics/hotspots', { params }),
@@ -281,6 +312,8 @@ export const api = {
   // Review queue (technicians: pending in their area; agriculturists: escalations)
   queue: (kind) => request('/sync/queue', { params: { kind } }),
   scan: (id) => request(`/sync/scans/${id}`),
+  // Agriculturists and technicians (their area). The database checks it too.
+  deleteRecord: (id, reason = '') => request(`/sync/scans/${id}`, { method: 'DELETE', params: { reason } }),
   review: (id, body) => request(`/sync/scans/${id}/review`, { method: 'POST', body }),
   // Built by hand: crop_stage is required even when empty ('' = the any-stage thresholds).
   levelSuggestion: ({ pest, crop_stage, count, indicators = [] }) => {
@@ -308,6 +341,14 @@ export const api = {
   deleteUser: (id) => request(`/dashboard/users/${id}`, { method: 'DELETE' }),
   setUserAvatar: (id, file) => request(`/dashboard/users/${id}/avatar`, { method: 'POST', form: photoForm(file), timeout: 60000 }),
   clearUserAvatar: (id) => request(`/dashboard/users/${id}/avatar`, { method: 'DELETE' }),
+
+  // Activity logs (agriculturists): sign-ins, sign-outs and important actions.
+  activity: (params) => request('/dashboard/activity', { params }),
+  activitySessions: (params) => request('/dashboard/activity/sessions', { params }),
+  async downloadActivity(params, filename) {
+    const res = await request('/dashboard/activity/export', { params, raw: true, timeout: 120000 });
+    saveBlob(await res.blob(), filename);
+  },
 
   async downloadReport(kind, params, filename) {
     const res = await request(`/dashboard/reports/${kind}`, { params, raw: true, timeout: 120000 });

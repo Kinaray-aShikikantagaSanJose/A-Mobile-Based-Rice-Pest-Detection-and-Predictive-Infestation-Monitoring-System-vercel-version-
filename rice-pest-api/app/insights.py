@@ -19,7 +19,9 @@ from . import land, observations as obs, schema
 from .database import local_today
 
 VALIDATED = ("validated",)
-STATUSES = ("pending", "validated", "returned", "escalated")
+# no_pests: the model confidently found no insect on a clear photo (closed
+# without review; see sync_router.submit_observation).
+STATUSES = ("pending", "validated", "returned", "escalated", "no_pests")
 LEVELS = ("LOW", "MEDIUM", "HIGH")
 LEVEL_RANK = {lv: i for i, lv in enumerate(LEVELS)}
 CROP_STAGES = ("Vegetative", "Reproductive", "Ripening")
@@ -81,7 +83,7 @@ def _shape(r) -> dict:
         "report_type": r.report_type,
         "is_disease": is_disease,
         "pest_key": pest_key,
-        "pest": pest,
+        "pest": pest if r.validation_status != "no_pests" else "No pests found",
         "count": count,  # None = not countable
         "ai_pest": obs.pest_name(r.ai_pest),
         "ai_confidence": r.ai_confidence,
@@ -430,6 +432,11 @@ def treatment_followups(db: Session, viewer: dict) -> dict:
         if t.f_id is None:
             outcome = "overdue" if t.follow_up_due and t.follow_up_due < today else "awaiting follow-up"
             after = reduction = None
+        elif t.f_status == "no_pests":
+            # The follow-up photo showed no pests at all.
+            after = 0
+            reduction = 100.0 if before else None
+            outcome = "improved"
         elif t.f_status != "validated":
             outcome, after, reduction = "follow-up in review", None, None
         else:

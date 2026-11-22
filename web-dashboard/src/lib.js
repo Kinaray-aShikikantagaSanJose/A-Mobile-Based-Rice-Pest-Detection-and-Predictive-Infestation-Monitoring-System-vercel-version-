@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { currentLocale, translate } from './i18n/index.jsx';
 
 // ---------------------------------------------------------------- data hooks
 
@@ -84,26 +85,38 @@ export function useAction() {
 
 // ---------------------------------------------------------------- formatting
 
-const dateFmt = new Intl.DateTimeFormat('en-PH', { month: 'short', day: 'numeric', year: 'numeric' });
-const dateTimeFmt = new Intl.DateTimeFormat('en-PH', {
-  month: 'short',
-  day: 'numeric',
-  year: 'numeric',
-  hour: 'numeric',
-  minute: '2-digit',
-});
+// Dates follow the chosen language (Filipino month names for Filipino and
+// Kinaray-a). Formatters are made once per language.
+const formatters = new Map();
+function fmt(kind) {
+  const key = `${currentLocale()}:${kind}`;
+  if (!formatters.has(key)) {
+    const options =
+      kind === 'date'
+        ? { month: 'short', day: 'numeric', year: 'numeric' }
+        : { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' };
+    let f;
+    try {
+      f = new Intl.DateTimeFormat(currentLocale(), options);
+    } catch {
+      f = new Intl.DateTimeFormat('en-PH', options);
+    }
+    formatters.set(key, f);
+  }
+  return formatters.get(key);
+}
 
-export const fmtDate = (iso) => (iso ? dateFmt.format(new Date(iso)) : '—');
-export const fmtDateTime = (iso) => (iso ? dateTimeFmt.format(new Date(iso)) : '—');
+export const fmtDate = (iso) => (iso ? fmt('date').format(new Date(iso)) : '—');
+export const fmtDateTime = (iso) => (iso ? fmt('datetime').format(new Date(iso)) : '—');
 export const fmtNum = (n, digits = 0) =>
   n === null || n === undefined ? '—' : Number(n).toLocaleString('en-PH', { maximumFractionDigits: digits });
 export const fmtPct = (n) => (n === null || n === undefined ? '—' : `${n > 0 ? '+' : ''}${fmtNum(n, 1)}%`);
 export const fmtConf = (c) => (c === null || c === undefined ? '' : `${Math.round(c * 100)}%`);
 /** A count of null means the reviewer (or the model result) marked it not countable. */
-export const fmtCount = (n) => (n === null || n === undefined ? 'Not countable' : fmtNum(n));
+export const fmtCount = (n) => (n === null || n === undefined ? translate('Not countable') : fmtNum(n));
 
 export const monthLabel = (ym) =>
-  ym ? new Date(`${ym}-01T00:00:00`).toLocaleDateString('en-PH', { month: 'long', year: 'numeric' }) : '—';
+  ym ? new Date(`${ym}-01T00:00:00`).toLocaleDateString(currentLocale(), { month: 'long', year: 'numeric' }) : '—';
 export const quarterLabel = (q) => (q ? `${q.slice(5)} ${q.slice(0, 4)}` : '—');
 
 export const daysSince = (iso) => (iso ? Math.max(0, Math.floor((Date.now() - new Date(iso)) / 86400000)) : null);
@@ -112,11 +125,11 @@ export const daysSince = (iso) => (iso ? Math.max(0, Math.floor((Date.now() - ne
 export function waitingLabel(iso) {
   if (!iso) return '—';
   const mins = Math.max(0, Math.floor((Date.now() - new Date(iso)) / 60000));
-  if (mins < 60) return `${mins} min`;
+  if (mins < 60) return translate('{n} min', { n: mins });
   const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours} h`;
+  if (hours < 24) return translate('{n} h', { n: hours });
   const days = Math.floor(hours / 24);
-  return `${days} day${days === 1 ? '' : 's'}`;
+  return translate(days === 1 ? '{n} day' : '{n} days', { n: days });
 }
 
 export const todayIso = () => {

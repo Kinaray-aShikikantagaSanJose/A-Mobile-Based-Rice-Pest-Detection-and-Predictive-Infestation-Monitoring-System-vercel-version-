@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../app_router.dart';
+import '../l10n/app_language.dart';
 import '../models/record.dart';
 import '../services/sync_service.dart';
 import '../theme.dart';
@@ -68,7 +69,10 @@ class _F26TreatmentsState extends State<F26Treatments> {
       body: SafeArea(
         child: Column(
           children: [
-            const AppHeader(title: 'Treatments', subtitle: 'Options, what you applied, and follow-ups'),
+            AppHeader(
+              title: context.tr('Treatments'),
+              subtitle: context.tr('Options, what you applied, and follow-ups'),
+            ),
             Expanded(
               child: records == null
                   ? const Padding(
@@ -100,10 +104,10 @@ class _F26TreatmentsState extends State<F26Treatments> {
         children: [
           AppEmptyState(
             icon: Icons.healing_outlined,
-            title: 'No treatments yet',
-            message: 'When a technician validates your pest report, the treatment options for your crop stage '
-                'appear here. Log what you apply and the app reminds you to check the field.',
-            actionLabel: 'Start pest scan',
+            title: context.tr('No treatments yet'),
+            message: context.tr('When a technician validates your pest report, the treatment options for your crop stage '
+                'appear here. Log what you apply and the app reminds you to check the field.'),
+            actionLabel: context.tr('Start pest scan'),
             onAction: () => context.push(AppRouter.observe),
           ),
         ],
@@ -116,7 +120,7 @@ class _F26TreatmentsState extends State<F26Treatments> {
         _Summary(followUps: _followUps.length, ready: ready.length, applied: applied.length),
         if (_followUps.isNotEmpty) ...[
           const SizedBox(height: AppSpacing.xl),
-          const AppSectionHeader(title: 'Follow-up reminders'),
+          AppSectionHeader(title: context.tr('Follow-up reminders')),
           const SizedBox(height: AppSpacing.md),
           for (final (rec, t) in _followUps) ...[
             _FollowUpCard(record: rec, treatment: t),
@@ -125,11 +129,11 @@ class _F26TreatmentsState extends State<F26Treatments> {
         ],
         if (ready.isNotEmpty) ...[
           const SizedBox(height: AppSpacing.lg),
-          const AppSectionHeader(title: 'Ready for treatment'),
+          AppSectionHeader(title: context.tr('Ready for treatment')),
           const SizedBox(height: 4),
-          const Text(
-            'Validated by your technician. Open one to see the approved options for its crop stage.',
-            style: TextStyle(color: AppColors.textSecondary, fontSize: 13, height: 1.4),
+          Text(
+            context.tr('Validated by your technician. Open one to see the approved options for its crop stage.'),
+            style: const TextStyle(color: AppColors.textSecondary, fontSize: 13, height: 1.4),
           ),
           const SizedBox(height: AppSpacing.md),
           for (final r in ready) ...[
@@ -139,7 +143,7 @@ class _F26TreatmentsState extends State<F26Treatments> {
         ],
         if (applied.isNotEmpty) ...[
           const SizedBox(height: AppSpacing.lg),
-          const AppSectionHeader(title: 'What you applied'),
+          AppSectionHeader(title: context.tr('What you applied')),
           const SizedBox(height: AppSpacing.md),
           AppCard(
             padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg, vertical: AppSpacing.sm),
@@ -183,11 +187,11 @@ class _Summary extends StatelessWidget {
         );
     return Row(
       children: [
-        tile(Icons.alarm_rounded, AppColors.danger, followUps, 'Checks due'),
+        tile(Icons.alarm_rounded, AppColors.danger, followUps, context.tr('Checks due')),
         const SizedBox(width: AppSpacing.sm),
-        tile(Icons.verified_rounded, AppColors.orange, ready, 'To treat'),
+        tile(Icons.verified_rounded, AppColors.orange, ready, context.tr('To treat')),
         const SizedBox(width: AppSpacing.sm),
-        tile(Icons.task_alt_rounded, AppColors.primary, applied, 'Applied'),
+        tile(Icons.task_alt_rounded, AppColors.primary, applied, context.tr('Applied')),
       ],
     );
   }
@@ -212,7 +216,8 @@ class _FollowUpCard extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('How is the field now?', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+                      Text(context.tr('How is the field now?'),
+                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
                       Text(record.title, style: const TextStyle(color: AppColors.textMuted, fontSize: 12.5)),
                     ],
                   ),
@@ -221,13 +226,15 @@ class _FollowUpCard extends StatelessWidget {
             ),
             const SizedBox(height: AppSpacing.sm),
             Text(
-              'You applied "${treatment.treatment}" on ${formatShortDate(treatment.appliedAt)}. '
-              'Take a photo so your technician can see if it worked.',
+              context.tr(
+                'You applied "{treatment}" on {date}. Take a photo so your technician can see if it worked.',
+                {'treatment': treatment.treatment, 'date': formatShortDate(treatment.appliedAt)},
+              ),
               style: const TextStyle(height: 1.4, fontSize: 13.5),
             ),
             const SizedBox(height: AppSpacing.md),
             AppPrimaryButton(
-              label: 'Check the field',
+              label: context.tr('Check the field'),
               icon: Icons.photo_camera_rounded,
               compact: true,
               onPressed: () => context.push(
@@ -249,12 +256,12 @@ class _AppliedRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = treatment;
     final (String status, Color color) = t.pending
-        ? ('Waiting for signal', AppColors.textMuted)
+        ? (context.tr('Waiting for signal'), AppColors.textMuted)
         : t.followUpScanId != null
-            ? ('Follow-up sent', AppColors.primary)
+            ? (context.tr('Follow-up sent'), AppColors.primary)
             : t.followUpIsDue
-                ? ('Follow-up due now', AppColors.danger)
-                : ('Follow-up ${formatShortDate(t.followUpDue)}', AppColors.orange);
+                ? (context.tr('Follow-up due now'), AppColors.danger)
+                : (context.tr('Follow-up {date}', {'date': formatShortDate(t.followUpDue)}), AppColors.orange);
     return InkWell(
       onTap: record == null ? null : () => context.push(AppRouter.record, extra: record),
       child: Padding(

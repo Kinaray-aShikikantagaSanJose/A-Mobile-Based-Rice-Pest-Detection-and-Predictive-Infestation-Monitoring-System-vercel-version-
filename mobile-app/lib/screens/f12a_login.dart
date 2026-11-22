@@ -6,9 +6,11 @@ import '../app_router.dart';
 import '../services/auth_service.dart';
 import '../utils/api_config.dart';
 import '../controllers/auth_controller.dart';
+import '../l10n/app_language.dart';
 import '../theme.dart';
 import '../widgets/brand.dart';
 import '../widgets/app_widgets.dart';
+import '../widgets/language_button.dart';
 import '../widgets/motion.dart';
 
 @Preview(name: 'F12aLogin', size: Size(390.0, 844.0))
@@ -149,7 +151,7 @@ class F12aLoginState extends State<F12aLogin> {
     String note;
     try {
       await AuthService.instance.resendOtp(email: email);
-      note = 'We sent a new verification code to $email.';
+      note = 'We sent a new verification code to {email}.';
     } on AuthException catch (e) {
       if (!mounted) return;
       // 429: a code went out moments ago and is still valid.
@@ -161,7 +163,7 @@ class F12aLoginState extends State<F12aLogin> {
         });
         return;
       }
-      note = 'Use the code we sent to $email a moment ago.';
+      note = 'Use the code we sent to {email} a moment ago.';
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -175,7 +177,7 @@ class F12aLoginState extends State<F12aLogin> {
     setState(() => _isOpeningVerification = false);
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(note)));
+      ..showSnackBar(SnackBar(content: Text(context.tr(note, {'email': email}))));
     context.push(
       AppRouter.otp,
       extra: <String, dynamic>{'email': email, 'password': password},
@@ -187,17 +189,19 @@ class F12aLoginState extends State<F12aLogin> {
       context: context,
       builder: (dialogContext) => AlertDialog(
         icon: const Icon(Icons.lock_reset_rounded, color: AppColors.primary, size: 32),
-        title: const Text('Reset your password'),
-        content: const Text(
-          'Password resets are handled by your local agriculture office. '
-          'Contact your Municipal Agriculture Office or your assigned '
-          'agricultural technician and they will help you regain access '
-          'to your account.',
+        title: Text(dialogContext.tr('Reset your password')),
+        content: Text(
+          dialogContext.tr(
+            'Password resets are handled by your local agriculture office. '
+            'Contact your Municipal Agriculture Office or your assigned '
+            'agricultural technician and they will help you regain access '
+            'to your account.',
+          ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('Got it'),
+            child: Text(dialogContext.tr('Got it')),
           ),
         ],
       ),
@@ -230,15 +234,15 @@ class F12aLoginState extends State<F12aLogin> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: staggered([
-                        const Text(
-                          'Sign in',
-                          style: TextStyle(fontFamily: AppFonts.display, fontSize: 24, fontWeight: FontWeight.w800),
+                        Text(
+                          context.tr('Sign in'),
+                          style: const TextStyle(fontFamily: AppFonts.display, fontSize: 24, fontWeight: FontWeight.w800),
                         ),
-                        const Padding(
-                          padding: EdgeInsets.only(top: 2, bottom: AppSpacing.lg),
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2, bottom: AppSpacing.lg),
                           child: Text(
-                            'Log in with the email you registered with',
-                            style: TextStyle(color: AppColors.textSecondary, fontSize: 14),
+                            context.tr('Log in with the email you registered with'),
+                            style: const TextStyle(color: AppColors.textSecondary, fontSize: 14),
                           ),
                         ),
                         if (_sessionExpired)
@@ -255,9 +259,9 @@ class F12aLoginState extends State<F12aLogin> {
                           alignment: Alignment.centerRight,
                           child: TextButton(
                             onPressed: _showForgotPasswordDialog,
-                            child: const Text(
-                              'Forgot password?',
-                              style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                            child: Text(
+                              context.tr('Forgot password?'),
+                              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
                             ),
                           ),
                         ),
@@ -265,7 +269,7 @@ class F12aLoginState extends State<F12aLogin> {
                         Padding(
                           padding: const EdgeInsets.only(top: AppSpacing.lg),
                           child: AppPrimaryButton(
-                            label: _isLoggingIn ? 'Logging in...' : 'Log In',
+                            label: _isLoggingIn ? context.tr('Logging in...') : context.tr('Log In'),
                             icon: _isLoggingIn ? null : Icons.login_rounded,
                             loading: _isLoggingIn,
                             onPressed: _handleLogin,
@@ -275,17 +279,17 @@ class F12aLoginState extends State<F12aLogin> {
                           padding: const EdgeInsets.only(top: AppSpacing.md),
                           child: _buildRegisterRow(),
                         ),
-                        const Padding(
-                          padding: EdgeInsets.only(top: AppSpacing.sm),
+                        Padding(
+                          padding: const EdgeInsets.only(top: AppSpacing.sm),
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Icon(Icons.shield_outlined, size: 14, color: AppColors.textMuted),
-                              SizedBox(width: 4),
+                              const Icon(Icons.shield_outlined, size: 14, color: AppColors.textMuted),
+                              const SizedBox(width: 4),
                               Flexible(
                                 child: Text(
-                                  'For farmers and agricultural technicians',
-                                  style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+                                  context.tr('For farmers and agricultural technicians'),
+                                  style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
                                 ),
                               ),
                             ],
@@ -333,20 +337,23 @@ class F12aLoginState extends State<F12aLogin> {
           ),
           Padding(
             padding: EdgeInsets.fromLTRB(AppSpacing.hPad, top + AppSpacing.lg, AppSpacing.hPad, 52),
-            child: const Column(
+            child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
+                const Row(
                   children: [
                     BrandMark(size: 52),
                     SizedBox(width: AppSpacing.md),
                     BrandWordmark(fontSize: 22),
+                    Spacer(),
+                    // Language picker, so people can switch before signing in.
+                    LanguageButton(dark: true),
                   ],
                 ),
-                Spacer(),
+                const Spacer(),
                 Text(
-                  'Welcome Back',
-                  style: TextStyle(
+                  context.tr('Welcome Back'),
+                  style: const TextStyle(
                     fontFamily: AppFonts.display,
                     color: Colors.white,
                     fontSize: 34,
@@ -354,10 +361,10 @@ class F12aLoginState extends State<F12aLogin> {
                     height: 1.05,
                   ),
                 ),
-                SizedBox(height: 6),
+                const SizedBox(height: 6),
                 Text(
-                  'Report pests, follow treatments and keep your field healthy.',
-                  style: TextStyle(color: Color(0xDDFFFFFF), fontSize: 14.5, height: 1.4),
+                  context.tr('Report pests, follow treatments and keep your field healthy.'),
+                  style: const TextStyle(color: Color(0xDDFFFFFF), fontSize: 14.5, height: 1.4),
                 ),
               ],
             ),
@@ -375,14 +382,14 @@ class F12aLoginState extends State<F12aLogin> {
         borderRadius: BorderRadius.circular(AppRadius.sm),
         border: Border.all(color: AppColors.orange.withValues(alpha: 0.3)),
       ),
-      child: const Row(
+      child: Row(
         children: [
-          Icon(Icons.schedule_rounded, size: 18, color: AppColors.orange),
-          SizedBox(width: AppSpacing.sm),
+          const Icon(Icons.schedule_rounded, size: 18, color: AppColors.orange),
+          const SizedBox(width: AppSpacing.sm),
           Expanded(
             child: Text(
-              'Your session expired. Please log in again.',
-              style: TextStyle(
+              context.tr('Your session expired. Please log in again.'),
+              style: const TextStyle(
                 color: AppColors.textPrimary,
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
@@ -404,9 +411,9 @@ class F12aLoginState extends State<F12aLogin> {
       enableSuggestions: false,
       onSubmitted: (_) => _passwordFocus.requestFocus(),
       style: const TextStyle(color: AppColors.textPrimary, fontSize: 14),
-      decoration: const InputDecoration(
-        hintText: 'Email address',
-        prefixIcon: Icon(Icons.mail_outline_rounded, color: AppColors.textMuted, size: 20),
+      decoration: InputDecoration(
+        hintText: context.tr('Email address'),
+        prefixIcon: const Icon(Icons.mail_outline_rounded, color: AppColors.textMuted, size: 20),
       ),
     );
   }
@@ -423,10 +430,10 @@ class F12aLoginState extends State<F12aLogin> {
       onSubmitted: (_) => _handleLogin(),
       style: const TextStyle(color: AppColors.textPrimary, fontSize: 14),
       decoration: InputDecoration(
-        hintText: 'Password',
+        hintText: context.tr('Password'),
         prefixIcon: const Icon(Icons.lock_outline_rounded, color: AppColors.textMuted, size: 20),
         suffixIcon: IconButton(
-          tooltip: _obscurePassword ? 'Show password' : 'Hide password',
+          tooltip: _obscurePassword ? context.tr('Show password') : context.tr('Hide password'),
           icon: AppSwitcher(
             duration: AppMotion.fast,
             alignment: Alignment.center,
@@ -489,7 +496,7 @@ class F12aLoginState extends State<F12aLogin> {
               const SizedBox(width: AppSpacing.sm),
               Expanded(
                 child: Text(
-                  _errorMessage!,
+                  context.tr(_errorMessage!),
                   style: const TextStyle(
                     color: AppColors.danger,
                     fontSize: 13,
@@ -515,10 +522,10 @@ class F12aLoginState extends State<F12aLogin> {
                   Flexible(
                     child: Text(
                       connected
-                          ? 'Connected to the server'
+                          ? context.tr('Connected to the server')
                           : _serverUnreachable
-                              ? 'Searching this network; sync will resume automatically.'
-                              : 'Finding the server on Wi-Fi, Ethernet, or hotspot…',
+                              ? context.tr('Searching this network; sync will resume automatically.')
+                              : context.tr('Finding the server on Wi-Fi, Ethernet, or hotspot…'),
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         color: connected ? AppColors.success : AppColors.textMuted,
@@ -532,16 +539,18 @@ class F12aLoginState extends State<F12aLogin> {
           ),
           if (_serverUnreachable) ...[
             const SizedBox(height: AppSpacing.md),
-            const Text(
-              'Keep this device on the same local network as the server. The app retries discovery automatically.',
+            Text(
+              context.tr(
+                'Keep this device on the same local network as the server. The app retries discovery automatically.',
+              ),
               textAlign: TextAlign.center,
-              style: TextStyle(color: AppColors.textMuted, fontSize: 12, height: 1.4),
+              style: const TextStyle(color: AppColors.textMuted, fontSize: 12, height: 1.4),
             ),
           ],
           if (_needsVerification) ...[
             const SizedBox(height: AppSpacing.md),
             AppSecondaryButton(
-              label: _isOpeningVerification ? 'Sending code...' : 'Verify my email',
+              label: _isOpeningVerification ? context.tr('Sending code...') : context.tr('Verify my email'),
               icon: Icons.mark_email_read_outlined,
               compact: true,
               expanded: false,
@@ -558,15 +567,15 @@ class F12aLoginState extends State<F12aLogin> {
       alignment: WrapAlignment.center,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        const Text(
-          "Don't have an account?",
-          style: TextStyle(color: AppColors.textSecondary, fontSize: 14),
+        Text(
+          context.tr("Don't have an account?"),
+          style: const TextStyle(color: AppColors.textSecondary, fontSize: 14),
         ),
         TextButton(
           onPressed: () => context.go(AppRouter.register),
-          child: const Text(
-            'Sign Up',
-            style: TextStyle(
+          child: Text(
+            context.tr('Sign Up'),
+            style: const TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.bold,
               decoration: TextDecoration.underline,

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../l10n/app_language.dart';
 import '../theme.dart';
 import '../widgets/app_widgets.dart';
 import '../widgets/motion.dart';
@@ -130,13 +131,13 @@ class _F47SubmissionDoneState extends State<F47SubmissionDone> {
     if (!r.ok) {
       return [
         AppPrimaryButton(
-          label: 'Go back and try again',
+          label: context.tr('Go back and try again'),
           icon: Icons.arrow_back_rounded,
           onPressed: () => Navigator.of(context).pop(),
         ),
         const SizedBox(height: AppSpacing.md),
         AppSecondaryButton(
-          label: 'Back to dashboard',
+          label: context.tr('Back to dashboard'),
           icon: Icons.home_rounded,
           onPressed: () => ShellNav.open(context),
         ),
@@ -145,19 +146,19 @@ class _F47SubmissionDoneState extends State<F47SubmissionDone> {
     return [
       if (a.nextLabel != null && a.nextTab != null) ...[
         AppPrimaryButton(
-          label: a.nextLabel!,
+          label: context.tr(a.nextLabel!),
           icon: a.nextIcon ?? Icons.arrow_forward_rounded,
           onPressed: () => ShellNav.open(context, a.nextTab!),
         ),
         const SizedBox(height: AppSpacing.md),
         AppSecondaryButton(
-          label: 'Back to dashboard',
+          label: context.tr('Back to dashboard'),
           icon: Icons.home_rounded,
           onPressed: () => ShellNav.open(context),
         ),
       ] else
         AppPrimaryButton(
-          label: 'Back to dashboard',
+          label: context.tr('Back to dashboard'),
           icon: Icons.home_rounded,
           onPressed: () => ShellNav.open(context),
         ),
@@ -165,7 +166,7 @@ class _F47SubmissionDoneState extends State<F47SubmissionDone> {
         const SizedBox(height: AppSpacing.sm),
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: Text(a.backLabel!, style: const TextStyle(fontWeight: FontWeight.w700)),
+          child: Text(context.tr(a.backLabel!), style: const TextStyle(fontWeight: FontWeight.w700)),
         ),
       ],
     ];
@@ -207,13 +208,13 @@ class _Status extends StatelessWidget {
         ),
         const SizedBox(height: AppSpacing.xl),
         Text(
-          title,
+          context.tr(title),
           textAlign: TextAlign.center,
           style: const TextStyle(fontFamily: AppFonts.display, fontSize: 24, fontWeight: FontWeight.w800),
         ),
         const SizedBox(height: AppSpacing.sm),
         Text(
-          message,
+          context.tr(message),
           textAlign: TextAlign.center,
           style: const TextStyle(color: AppColors.textSecondary, fontSize: 15, height: 1.5),
         ),

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import '../app_router.dart';
+import '../l10n/app_language.dart';
 import '../platform/local_files.dart';
 import '../theme.dart';
 import '../services/api_client.dart';
@@ -43,7 +44,7 @@ class AppHeader extends StatelessWidget {
           if (back) ...[
             AppCircleButton(
               icon: Icons.arrow_back_rounded,
-              tooltip: 'Back',
+              tooltip: context.tr('Back'),
               onTap: onBack ?? () => popOrGoHome(context),
             ),
             const SizedBox(width: AppSpacing.md),
@@ -623,7 +624,7 @@ Future<bool> confirmAction(
             const SizedBox(height: AppSpacing.sm),
             TextButton(
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Not yet, go back', style: TextStyle(fontWeight: FontWeight.w600)),
+              child: Text(ctx.tr('Not yet, go back'), style: const TextStyle(fontWeight: FontWeight.w600)),
             ),
           ],
         ),
@@ -684,7 +685,7 @@ class LevelChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => AppChip(
-        label: '${levelLabel(level)} infestation',
+        label: context.tr('{level} infestation', {'level': levelLabel(level)}),
         color: levelColor(level),
       );
 }

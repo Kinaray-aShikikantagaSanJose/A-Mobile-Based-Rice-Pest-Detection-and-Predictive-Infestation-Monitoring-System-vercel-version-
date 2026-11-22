@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../app_router.dart';
+import '../controllers/auth_controller.dart';
+import '../l10n/app_language.dart';
 import '../models/record.dart';
 import '../services/api_client.dart';
 import '../services/sync_service.dart';
@@ -32,6 +34,8 @@ class _F24RecordDetailState extends State<F24RecordDetail> {
   String? _error;
   bool _loading = false;
 
+  bool get _isTech => AuthControllerImpl.instance.role == AppRole.technician;
+
   @override
   void initState() {
     super.initState();
@@ -53,10 +57,24 @@ class _F24RecordDetailState extends State<F24RecordDetail> {
         _error = null;
       });
     } on ApiException catch (e) {
-      if (mounted) setState(() => _error = e.message);
+      if (!mounted) return;
+      if (e.statusCode == 410) {
+        // Deleted on the server (e.g. by a technician): it is gone from the phone too.
+        _snack(context.tr('This observation was deleted.'));
+        popOrGoHome(context);
+        return;
+      }
+      setState(() => _error = e.message);
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  /// Technicians: delete this observation for everyone, then leave.
+  Future<void> _delete() async {
+    final id = _record?.id;
+    if (id == null) return;
+    if (await confirmDeleteRecord(context, id) && mounted) popOrGoHome(context);
   }
 
   Future<void> _sendNow() async {
@@ -74,7 +92,7 @@ class _F24RecordDetailState extends State<F24RecordDetail> {
     if (updated?.uploaded == true) {
       _load();
     } else {
-      _snack('Still no connection. It will be sent automatically.');
+      _snack(context.tr('Still no connection. It will be sent automatically.'));
     }
   }
 
@@ -82,11 +100,11 @@ class _F24RecordDetailState extends State<F24RecordDetail> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Discard this observation?'),
-        content: const Text('It will be removed from this phone and not sent.'),
+        title: Text(ctx.tr('Discard this observation?')),
+        content: Text(ctx.tr('It will be removed from this phone and not sent.')),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Keep it')),
-          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Discard')),
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(ctx.tr('Keep it'))),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: Text(ctx.tr('Discard'))),
         ],
       ),
     );
@@ -110,18 +128,20 @@ class _F24RecordDetailState extends State<F24RecordDetail> {
     if (draft == null || !mounted) return;
     final ok = await confirmAction(
       context,
-      title: 'Log this treatment?',
-      message: 'In about a week the app will remind you to check the field, so your technician can see if it worked.',
-      confirmLabel: 'Yes, log it',
+      title: context.tr('Log this treatment?'),
+      message: context.tr(
+          'In about a week the app will remind you to check the field, so your technician can see if it worked.'),
+      confirmLabel: context.tr('Yes, log it'),
       icon: Icons.task_alt_rounded,
       summary: [
-        ('Treatment', draft.label),
-        ('Date applied', formatShortDate(draft.appliedAt.toIso8601String())),
-        ('For', r.title),
+        (context.tr('Treatment'), draft.label),
+        (context.tr('Date applied'), formatShortDate(draft.appliedAt.toIso8601String())),
+        (context.tr('For'), r.title),
       ],
     );
     if (!ok || !mounted) return;
 
+    // The result screen translates these titles and messages.
     Future<DoneResult> work() async {
       try {
         final sent = await SyncService.logTreatment(
@@ -162,13 +182,20 @@ class _F24RecordDetailState extends State<F24RecordDetail> {
         child: Column(
           children: [
             AppHeader(
-              title: r?.title ?? 'Record',
+              title: r?.title ?? context.tr('Record'),
               subtitle: r == null ? null : formatDateTime(r.createdAt),
               actions: [
                 if (_loading)
                   const Padding(
                     padding: EdgeInsets.all(8),
                     child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
+                  ),
+                if (_isTech && r?.id != null)
+                  AppCircleButton(
+                    icon: Icons.delete_outline_rounded,
+                    tooltip: context.tr('Delete record'),
+                    color: AppColors.danger,
+                    onTap: _delete,
                   ),
               ],
             ),
@@ -178,9 +205,9 @@ class _F24RecordDetailState extends State<F24RecordDetail> {
                       ? const Center(child: CircularProgressIndicator())
                       : AppEmptyState(
                           icon: Icons.cloud_off_rounded,
-                          title: 'Can\'t open this record',
-                          message: _error!,
-                          actionLabel: 'Try again',
+                          title: context.tr('Can\'t open this record'),
+                          message: context.tr(_error!),
+                          actionLabel: context.tr('Try again'),
                           onAction: _load,
                           color: AppColors.danger,
                         ))
@@ -245,13 +272,13 @@ class _F24RecordDetailState extends State<F24RecordDetail> {
                   left: AppSpacing.md,
                   child: _Pill(
                     icon: r.isDisease ? Icons.coronavirus_outlined : Icons.bug_report_outlined,
-                    label: r.isDisease ? 'Disease report' : 'Pest report',
+                    label: context.tr(r.isDisease ? 'Disease report' : 'Pest report'),
                   ),
                 ),
-                const Positioned(
+                Positioned(
                   top: AppSpacing.md,
                   right: AppSpacing.md,
-                  child: _Pill(icon: Icons.zoom_in_rounded, label: 'Tap to zoom'),
+                  child: _Pill(icon: Icons.zoom_in_rounded, label: context.tr('Tap to zoom')),
                 ),
                 Positioned(
                   left: AppSpacing.md,
@@ -261,7 +288,7 @@ class _F24RecordDetailState extends State<F24RecordDetail> {
                     spacing: 6,
                     runSpacing: 6,
                     children: [
-                      if (r.cropStage.isNotEmpty) _Pill(icon: Icons.grass_rounded, label: r.cropStage),
+                      if (r.cropStage.isNotEmpty) _Pill(icon: Icons.grass_rounded, label: context.tr(r.cropStage)),
                       if (r.barangay.isNotEmpty || r.municipality.isNotEmpty)
                         _Pill(
                           icon: Icons.location_on_rounded,
@@ -288,16 +315,25 @@ class _F24RecordDetailState extends State<F24RecordDetail> {
             icon: Icons.signal_cellular_connected_no_internet_0_bar_rounded,
             color: r.uploadError.isNotEmpty ? AppColors.danger : AppColors.textSecondary,
             text: r.uploadError.isNotEmpty
-                ? 'It could not be sent: ${r.uploadError}'
-                : 'This observation is saved on your phone and will be sent when you are back in signal. '
-                    '${r.isDisease ? '' : 'The pest check happens after it is sent, so there is no result yet.'}',
+                ? context.tr('It could not be sent: {error}', {'error': context.tr(r.uploadError)})
+                : [
+                    context.tr(
+                        'This observation is saved on your phone and will be sent when you are back in signal.'),
+                    if (!r.isDisease)
+                      context.tr('The pest check happens after it is sent, so there is no result yet.'),
+                  ].join(' '),
           ),
           const SizedBox(height: AppSpacing.md),
-          AppPrimaryButton(label: 'Try sending now', icon: Icons.cloud_upload_outlined, loading: _loading, onPressed: _sendNow),
+          AppPrimaryButton(
+            label: context.tr('Try sending now'),
+            icon: Icons.cloud_upload_outlined,
+            loading: _loading,
+            onPressed: _sendNow,
+          ),
           if (r.uploadError.isNotEmpty) ...[
             const SizedBox(height: AppSpacing.md),
             AppSecondaryButton(
-              label: 'Discard this observation',
+              label: context.tr('Discard this observation'),
               icon: Icons.delete_outline_rounded,
               color: AppColors.danger,
               onPressed: () => _discard(r),
@@ -308,9 +344,10 @@ class _F24RecordDetailState extends State<F24RecordDetail> {
         return [
           chip,
           const SizedBox(height: AppSpacing.md),
-          const _Note(
+          _Note(
             icon: Icons.mark_email_read_rounded,
-            text: 'Sent for review by an agricultural technician. You will get a notification with the diagnosis and what to do.',
+            text: context.tr(
+                'Sent for review by an agricultural technician. You will get a notification with the diagnosis and what to do.'),
           ),
         ];
       case RecordState.forValidation:
@@ -319,10 +356,11 @@ class _F24RecordDetailState extends State<F24RecordDetail> {
         return [
           chip,
           const SizedBox(height: AppSpacing.md),
-          const _Note(
+          _Note(
             icon: Icons.forward_to_inbox_rounded,
             color: AppColors.purple,
-            text: 'Your technician asked an agriculturist to take a closer look. You will get a notification when there is an answer.',
+            text: context.tr(
+                'Your technician asked an agriculturist to take a closer look. You will get a notification when there is an answer.'),
           ),
           if (!r.isDisease) ...[const SizedBox(height: AppSpacing.md), AiResultCard(ai: r.ai)],
         ];
@@ -341,9 +379,13 @@ class _F24RecordDetailState extends State<F24RecordDetail> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('Your technician says:', style: TextStyle(color: AppColors.textSecondary)),
+                      Text(context.tr('Your technician says:'), style: const TextStyle(color: AppColors.textSecondary)),
                       const SizedBox(height: 4),
-                      Text(r.returnReason.isEmpty ? 'Please take the photo again.' : r.returnReason,
+                      // Quick reasons arrive in English and are shown in the farmer's language.
+                      Text(
+                          r.returnReason.isEmpty
+                              ? context.tr('Please take the photo again.')
+                              : context.tr(r.returnReason),
                           style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800, height: 1.35)),
                     ],
                   ),
@@ -353,25 +395,57 @@ class _F24RecordDetailState extends State<F24RecordDetail> {
           ),
           const SizedBox(height: AppSpacing.md),
           if (r.resubmittedAs != null) ...[
-            const _Note(
+            _Note(
               icon: Icons.check_circle_outline_rounded,
-              text: 'You already sent a new photo. It goes through the check again.',
+              text: context.tr('You already sent a new photo. It goes through the check again.'),
             ),
             const SizedBox(height: AppSpacing.md),
             AppSecondaryButton(
-              label: 'Open the new photo',
+              label: context.tr('Open the new photo'),
               icon: Icons.open_in_new_rounded,
               onPressed: () => context.push(AppRouter.record, extra: r.resubmittedAs),
             ),
           ] else
             AppPrimaryButton(
-              label: 'Retake the photo',
+              label: context.tr('Retake the photo'),
               icon: Icons.photo_camera_rounded,
               onPressed: r.id == null || !r.isMine ? null : () => _retake(r),
             ),
         ];
       case RecordState.validated:
         return r.isDisease ? _validatedDisease(r, chip) : _validatedPest(r, chip);
+      case RecordState.noPests:
+        // Closed without review; nothing to treat.
+        return [
+          chip,
+          const SizedBox(height: AppSpacing.md),
+          AppCard(
+            tinted: true,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const IconTile(icon: Icons.eco_rounded, color: AppColors.primary, size: 40),
+                const SizedBox(width: AppSpacing.md),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(context.tr('No pests found'),
+                          style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800, height: 1.35)),
+                      const SizedBox(height: 4),
+                      Text(
+                        context.tr('The photo was clear and no pests were seen, so this observation was closed '
+                            'without review. The photo was removed from the server to save space. Keep checking '
+                            'your field and send a new photo anytime.'),
+                        style: const TextStyle(fontSize: 14.5, height: 1.45),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ];
     }
   }
 
@@ -385,12 +459,12 @@ class _F24RecordDetailState extends State<F24RecordDetail> {
   List<Widget> _validatedDisease(Record r, Widget chip) => [
         chip,
         const SizedBox(height: AppSpacing.md),
-        _ConfirmedCard(level: r.level ?? r.confirmed?.level, title: 'Disease report'),
+        _ConfirmedCard(level: r.level ?? r.confirmed?.level, title: context.tr('Disease report')),
         if (r.diagnosis.isNotEmpty) ...[
           const SizedBox(height: AppSpacing.md),
           _Section(
             icon: Icons.medical_information_outlined,
-            title: 'Diagnosis',
+            title: context.tr('Diagnosis'),
             child: Text(r.diagnosis, style: const TextStyle(fontSize: 15.5, height: 1.45)),
           ),
         ],
@@ -398,7 +472,7 @@ class _F24RecordDetailState extends State<F24RecordDetail> {
           const SizedBox(height: AppSpacing.md),
           _Section(
             icon: Icons.tips_and_updates_outlined,
-            title: 'What to do',
+            title: context.tr('What to do'),
             child: Text(r.guidance, style: const TextStyle(fontSize: 15.5, height: 1.45)),
           ),
         ],
@@ -414,7 +488,7 @@ class _F24RecordDetailState extends State<F24RecordDetail> {
       _ConfirmedCard(
         level: c.level,
         title: c.pestLabel,
-        count: c.count == null ? 'Not countable' : plural(c.count!, 'insect'),
+        count: c.count == null ? context.tr('Not countable') : plural(c.count!, 'insect'),
         guidance: r.guidance,
       ),
       for (final t in treatments.where((t) => t.followUpIsDue)) ...[
@@ -424,17 +498,20 @@ class _F24RecordDetailState extends State<F24RecordDetail> {
       const SizedBox(height: AppSpacing.lg),
       _Section(
         icon: Icons.healing_rounded,
-        title: 'Treatment options',
-        subtitle: r.cropStage.isEmpty ? null : 'For the ${r.cropStage.toLowerCase()} stage',
+        title: context.tr('Treatment options'),
+        subtitle: r.cropStage.isEmpty
+            ? null
+            : context.tr('For the {stage} stage', {'stage': context.tr(r.cropStage).toLowerCase()}),
         child: recs == null
-            ? const Text('Open this record with signal to see the options.')
+            ? Text(context.tr('Open this record with signal to see the options.'))
             : recs.isEmpty
                     ? Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text(
-                            'No approved options for this case yet. Ask your agricultural technician what to do.',
-                            style: TextStyle(height: 1.45),
+                          Text(
+                            context.tr(
+                                'No approved options for this case yet. Ask your agricultural technician what to do.'),
+                            style: const TextStyle(height: 1.45),
                           ),
                           if (recs.alreadyTried.isNotEmpty) ...[
                             const SizedBox(height: AppSpacing.sm),
@@ -447,7 +524,7 @@ class _F24RecordDetailState extends State<F24RecordDetail> {
       if (r.isMine) ...[
         const SizedBox(height: AppSpacing.md),
         AppPrimaryButton(
-          label: 'I applied a treatment',
+          label: context.tr('I applied a treatment'),
           icon: Icons.task_alt_rounded,
           onPressed: r.id == null ? null : () => _logTreatment(r),
         ),
@@ -456,7 +533,7 @@ class _F24RecordDetailState extends State<F24RecordDetail> {
         const SizedBox(height: AppSpacing.lg),
         _Section(
           icon: Icons.history_rounded,
-          title: r.isMine ? 'What you applied' : 'Applied treatments',
+          title: context.tr(r.isMine ? 'What you applied' : 'Applied treatments'),
           child: Column(children: [for (final t in treatments) _TreatmentRow(treatment: t)]),
         ),
       ],
@@ -465,23 +542,43 @@ class _F24RecordDetailState extends State<F24RecordDetail> {
 
   Widget _details(Record r) {
     final trap = r.monitoringMethod == 'Trap-based';
+    // Stored values (crop stage, method, trap, target) stay English; shown translated.
     return _Section(
       icon: Icons.info_outline_rounded,
-      title: 'Details',
+      title: context.tr('Details'),
       child: Column(
         children: [
-          _Detail('Report', r.isDisease ? 'Disease report' : 'Pest report'),
-          if (r.resubmissionOf != null) _Detail('Retake', 'New photo for report #${r.resubmissionOf}'),
-          _Detail('Crop stage', r.cropStage),
-          _Detail('Land type', landTypeLabel(r.landType)),
-          if (!r.isDisease) _Detail('Checked by', r.monitoringMethod),
-          if (trap && r.trapType.isNotEmpty) _Detail('Trap or lure', r.trapType),
-          if (trap && r.targetPest.isNotEmpty) _Detail('Target pest', r.targetPest),
-          if (trap && r.targetSex.isNotEmpty) _Detail('Target sex', r.targetSex),
-          if (r.notes.isNotEmpty) _Detail(r.isDisease ? 'Symptoms' : 'Your notes', r.notes),
-          if (r.followUpOf != null) const _Detail('Follow-up', 'Checks on a treatment you applied'),
+          _Detail(context.tr('Report'), context.tr(r.isDisease ? 'Disease report' : 'Pest report')),
+          if (r.resubmissionOf != null)
+            _Detail(context.tr('Retake'), context.tr('New photo for report #{id}', {'id': r.resubmissionOf})),
+          _Detail(context.tr('Crop stage'), context.tr(r.cropStage)),
+          _Detail(context.tr('Land type'), landTypeLabel(r.landType)),
+          if (!r.isDisease) _Detail(context.tr('Checked by'), context.tr(r.monitoringMethod)),
+          if (trap && r.trapType.isNotEmpty) _Detail(context.tr('Trap or lure'), context.tr(r.trapType)),
+          if (trap && r.targetPest.isNotEmpty) _Detail(context.tr('Target pest'), context.tr(r.targetPest)),
+          if (trap && r.targetSex.isNotEmpty) _Detail(context.tr('Target sex'), context.tr(r.targetSex)),
+          if (r.notes.isNotEmpty) _Detail(context.tr(r.isDisease ? 'Symptoms' : 'Your notes'), r.notes),
+          if (r.followUpOf != null)
+            _Detail(context.tr('Follow-up'), context.tr('Checks on a treatment you applied')),
           if (r.barangay.isNotEmpty || r.municipality.isNotEmpty)
-            _Detail('Area', [r.barangay, r.municipality].where((x) => x.isNotEmpty).join(', ')),
+            _Detail(context.tr('Area'), [r.barangay, r.municipality].where((x) => x.isNotEmpty).join(', ')),
+          if (r.locationStatus == 'outside_antique')
+            Padding(
+              padding: const EdgeInsets.only(top: 2, bottom: 4),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.info_outline_rounded, size: 15, color: AppColors.textMuted),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      context.tr('The GPS point was outside Antique, so this was filed under your saved barangay.'),
+                      style: const TextStyle(color: AppColors.textMuted, fontSize: 12.5, height: 1.4),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           if (r.lat != null && r.lng != null) ...[
             const SizedBox(height: AppSpacing.sm),
             ClipRRect(
@@ -493,6 +590,125 @@ class _F24RecordDetailState extends State<F24RecordDetail> {
       ),
     );
   }
+}
+
+/// Technicians: asks before deleting an observation (with an optional reason
+/// the farmer sees), deletes it on the server and this phone while the sheet
+/// shows it is busy, then shows the outcome. Returns true once the record is
+/// gone, so the caller can leave its screen. Also used by the review screen.
+Future<bool> confirmDeleteRecord(BuildContext context, int scanId) async {
+  final outcome = await showModalBottomSheet<Object>(
+    context: context,
+    isScrollControlled: true,
+    enableDrag: false,
+    builder: (_) => _DeleteSheet(scanId: scanId),
+  );
+  if (outcome == null || !context.mounted) return false;
+  final messenger = ScaffoldMessenger.of(context)..hideCurrentSnackBar();
+  void show(String text) => messenger.showSnackBar(SnackBar(content: Text(text)));
+  if (outcome is ApiException) {
+    show(outcome.isOffline
+        ? context.tr('No signal. Deleting needs a connection; try again with signal.')
+        : context.tr(outcome.message));
+    return outcome.statusCode == 410; // already deleted: nothing left to show
+  }
+  show(context.tr('Observation deleted.'));
+  return true;
+}
+
+/// Pops true once deleted, or the ApiException to show.
+class _DeleteSheet extends StatefulWidget {
+  final int scanId;
+  const _DeleteSheet({required this.scanId});
+
+  @override
+  State<_DeleteSheet> createState() => _DeleteSheetState();
+}
+
+class _DeleteSheetState extends State<_DeleteSheet> {
+  final TextEditingController _reason = TextEditingController();
+  bool _busy = false;
+
+  @override
+  void dispose() {
+    _reason.dispose();
+    super.dispose();
+  }
+
+  Future<void> _delete() async {
+    FocusScope.of(context).unfocus();
+    setState(() => _busy = true);
+    Object result = true;
+    try {
+      await SyncService.deleteRecord(widget.scanId, reason: _reason.text.trim());
+    } on ApiException catch (e) {
+      result = e;
+      if (e.statusCode == 410) {
+        // Someone already deleted it: loading it drops the phone's copy too.
+        try {
+          await SyncService.record(widget.scanId);
+        } on ApiException catch (_) {
+          // Gone either way; the next list refresh tidies up.
+        }
+      }
+    }
+    if (mounted) Navigator.pop(context, result);
+  }
+
+  @override
+  Widget build(BuildContext context) => PopScope(
+        canPop: !_busy,
+        child: Padding(
+          padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+          child: SafeArea(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(AppSpacing.hPad, 0, AppSpacing.hPad, AppSpacing.lg),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Center(child: IconTile(icon: Icons.delete_outline_rounded, color: AppColors.danger, size: 56)),
+                  const SizedBox(height: AppSpacing.md),
+                  Text(
+                    context.tr('Delete this observation?'),
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontFamily: AppFonts.display, fontSize: 20, fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    context.tr('This removes the record, its photo, treatments and review history for everyone. '
+                        'The farmer is told in the app. This can\'t be undone.'),
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: AppColors.textSecondary, fontSize: 14, height: 1.45),
+                  ),
+                  const SizedBox(height: AppSpacing.lg),
+                  TextField(
+                    controller: _reason,
+                    enabled: !_busy,
+                    maxLines: 2,
+                    maxLength: 300,
+                    textCapitalization: TextCapitalization.sentences,
+                    decoration: InputDecoration(labelText: context.tr('Reason (optional, shown to the farmer)')),
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  AppPrimaryButton(
+                    label: context.tr('Delete'),
+                    icon: Icons.delete_outline_rounded,
+                    color: AppColors.danger,
+                    loading: _busy,
+                    onPressed: _delete,
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  TextButton(
+                    onPressed: _busy ? null : () => Navigator.pop(context),
+                    child: Text(context.tr('Cancel'), style: const TextStyle(fontWeight: FontWeight.w600)),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
 }
 
 class _Pill extends StatelessWidget {
@@ -552,8 +768,8 @@ class _ConfirmedCard extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('Confirmed by your technician',
-                          style: TextStyle(color: AppColors.textSecondary, fontSize: 12.5)),
+                      Text(context.tr('Confirmed by your technician'),
+                          style: const TextStyle(color: AppColors.textSecondary, fontSize: 12.5)),
                       Text(title, style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w800)),
                     ],
                   ),
@@ -605,10 +821,10 @@ class _Options extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'Approved by your agriculture office for this pest, crop stage and level. '
-          'Choose what fits your farm; your technician can help.',
-          style: TextStyle(color: AppColors.textSecondary, fontSize: 13.5, height: 1.4),
+        Text(
+          context.tr('Approved by your agriculture office for this pest, crop stage and level. '
+              'Choose what fits your farm; your technician can help.'),
+          style: const TextStyle(color: AppColors.textSecondary, fontSize: 13.5, height: 1.4),
         ),
         if (recs.alreadyTried.isNotEmpty) ...[
           const SizedBox(height: AppSpacing.sm),
@@ -628,7 +844,7 @@ class _Options extends StatelessWidget {
             ),
             if (type == 'chemical') ...[
               const SizedBox(height: AppSpacing.sm),
-              InfoBanner(icon: Icons.warning_amber_rounded, message: recs.chemicalNote),
+              InfoBanner(icon: Icons.warning_amber_rounded, message: context.tr(recs.chemicalNote)),
             ],
             for (final o in recs.groups[type]!)
               Padding(
@@ -649,7 +865,7 @@ class _Options extends StatelessWidget {
                       Text(o.description, style: const TextStyle(fontSize: 14, height: 1.45)),
                       if (o.sourceReference.isNotEmpty) ...[
                         const SizedBox(height: 6),
-                        Text('Source: ${o.sourceReference}',
+                        Text(context.tr('Source: {source}', {'source': o.sourceReference}),
                             style: const TextStyle(color: AppColors.textMuted, fontSize: 12.5)),
                       ],
                     ],
@@ -669,8 +885,14 @@ class _AlreadyTried extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Text(
-        'Not shown again because you already tried ${titles.length == 1 ? 'it' : 'them'} and sent feedback: '
-        '${titles.join(', ')}. Your technician can recommend ${titles.length == 1 ? 'it' : 'them'} again.',
+        context.tr(
+          titles.length == 1
+              ? 'Not shown again because you already tried it and sent feedback: {titles}. '
+                  'Your technician can recommend it again.'
+              : 'Not shown again because you already tried them and sent feedback: {titles}. '
+                  'Your technician can recommend them again.',
+          {'titles': titles.join(', ')},
+        ),
         style: const TextStyle(color: AppColors.textMuted, fontSize: 12.5, height: 1.4),
       );
 }
@@ -685,22 +907,28 @@ class _FollowUpPrompt extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Row(
+            Row(
               children: [
-                IconTile(icon: Icons.alarm_rounded, size: 38),
-                SizedBox(width: AppSpacing.md),
-                Expanded(child: Text('How is the field now?', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800))),
+                const IconTile(icon: Icons.alarm_rounded, size: 38),
+                const SizedBox(width: AppSpacing.md),
+                Expanded(
+                  child: Text(context.tr('How is the field now?'),
+                      style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+                ),
               ],
             ),
             const SizedBox(height: AppSpacing.sm),
             Text(
-              'It has been a while since you applied "${treatment.treatment}". Take a photo so your '
-              'technician can see if it worked.',
+              context.tr(
+                'It has been a while since you applied "{treatment}". Take a photo so your '
+                'technician can see if it worked.',
+                {'treatment': treatment.treatment},
+              ),
               style: const TextStyle(height: 1.4),
             ),
             const SizedBox(height: AppSpacing.md),
             AppPrimaryButton(
-              label: 'Check the field',
+              label: context.tr('Check the field'),
               icon: Icons.photo_camera_rounded,
               onPressed: () => context.push(
                 AppRouter.observe,
@@ -720,12 +948,12 @@ class _TreatmentRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = treatment;
     final (String status, Color color) = t.pending
-        ? ('Waiting for signal', AppColors.textMuted)
+        ? (context.tr('Waiting for signal'), AppColors.textMuted)
         : t.followUpScanId != null
-            ? ('Follow-up sent', AppColors.primary)
+            ? (context.tr('Follow-up sent'), AppColors.primary)
             : t.followUpIsDue
-                ? ('Follow-up due now', AppColors.danger)
-                : ('Follow-up on ${formatShortDate(t.followUpDue)}', AppColors.orange);
+                ? (context.tr('Follow-up due now'), AppColors.danger)
+                : (context.tr('Follow-up on {date}', {'date': formatShortDate(t.followUpDue)}), AppColors.orange);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
@@ -737,11 +965,11 @@ class _TreatmentRow extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(t.treatment, style: const TextStyle(fontWeight: FontWeight.w800)),
-                Text('Applied ${formatShortDate(t.appliedAt)}',
+                Text(context.tr('Applied {date}', {'date': formatShortDate(t.appliedAt)}),
                     style: const TextStyle(color: AppColors.textMuted, fontSize: 12.5)),
                 if (t.followUpSetBy != null && t.followUpScanId == null)
-                  const Text('Follow-up date set by your technician',
-                      style: TextStyle(color: AppColors.textMuted, fontSize: 12.5)),
+                  Text(context.tr('Follow-up date set by your technician'),
+                      style: const TextStyle(color: AppColors.textMuted, fontSize: 12.5)),
               ],
             ),
           ),
@@ -776,7 +1004,7 @@ class _TreatmentSheetState extends State<_TreatmentSheet> {
   int? _choice;
   DateTime _date = DateUtils.dateOnly(DateTime.now());
   final TextEditingController _ownText = TextEditingController();
-  String? _error;
+  String? _error; // English; shown translated
 
   @override
   void dispose() {
@@ -816,7 +1044,8 @@ class _TreatmentSheetState extends State<_TreatmentSheet> {
           shrinkWrap: true,
           padding: const EdgeInsets.fromLTRB(AppSpacing.hPad, 0, AppSpacing.hPad, AppSpacing.lg),
           children: [
-            const Text('What did you use?', style: TextStyle(fontFamily: AppFonts.display, fontSize: 20, fontWeight: FontWeight.w800)),
+            Text(context.tr('What did you use?'),
+                style: const TextStyle(fontFamily: AppFonts.display, fontSize: 20, fontWeight: FontWeight.w800)),
             const SizedBox(height: AppSpacing.md),
             RadioGroup<int>(
               groupValue: _choice,
@@ -838,12 +1067,12 @@ class _TreatmentSheetState extends State<_TreatmentSheet> {
                         size: 36,
                       ),
                     ),
-                  const RadioListTile<int>(
+                  RadioListTile<int>(
                     value: _own,
                     contentPadding: EdgeInsets.zero,
-                    title: Text('Something else', style: TextStyle(fontWeight: FontWeight.w600)),
-                    subtitle: Text('Describe what you did'),
-                    secondary: IconTile(icon: Icons.edit_note_rounded, color: AppColors.textSecondary, size: 36),
+                    title: Text(context.tr('Something else'), style: const TextStyle(fontWeight: FontWeight.w600)),
+                    subtitle: Text(context.tr('Describe what you did')),
+                    secondary: const IconTile(icon: Icons.edit_note_rounded, color: AppColors.textSecondary, size: 36),
                   ),
                 ],
               ),
@@ -854,7 +1083,7 @@ class _TreatmentSheetState extends State<_TreatmentSheet> {
                 maxLength: 200,
                 autofocus: true,
                 textCapitalization: TextCapitalization.sentences,
-                decoration: const InputDecoration(hintText: 'e.g. Removed weeds around the field'),
+                decoration: InputDecoration(hintText: context.tr('e.g. Removed weeds around the field')),
               ),
             const SizedBox(height: AppSpacing.sm),
             Material(
@@ -863,18 +1092,19 @@ class _TreatmentSheetState extends State<_TreatmentSheet> {
               child: ListTile(
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRadius.sm)),
                 leading: const Icon(Icons.event_rounded, color: AppColors.primary),
-                title: const Text('Date applied'),
+                title: Text(context.tr('Date applied')),
                 subtitle: Text(formatShortDate(_date.toIso8601String()), style: const TextStyle(fontWeight: FontWeight.w700)),
-                trailing: const Text('Change', style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.bold)),
+                trailing: Text(context.tr('Change'),
+                    style: const TextStyle(color: AppColors.primary, fontWeight: FontWeight.bold)),
                 onTap: _pickDate,
               ),
             ),
             if (_error != null) ...[
               const SizedBox(height: AppSpacing.sm),
-              Text(_error!, style: const TextStyle(color: AppColors.danger, fontWeight: FontWeight.w600)),
+              Text(context.tr(_error!), style: const TextStyle(color: AppColors.danger, fontWeight: FontWeight.w600)),
             ],
             const SizedBox(height: AppSpacing.lg),
-            AppPrimaryButton(label: 'Continue', icon: Icons.arrow_forward_rounded, onPressed: _next),
+            AppPrimaryButton(label: context.tr('Continue'), icon: Icons.arrow_forward_rounded, onPressed: _next),
           ],
         ),
       ),

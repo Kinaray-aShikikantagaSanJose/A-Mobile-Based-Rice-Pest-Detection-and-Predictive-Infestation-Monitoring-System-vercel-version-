@@ -1,21 +1,24 @@
 """Mobile app API: observations, records, treatments, notifications, and the
 technician / agriculturist review queue."""
 import json
+import logging
 import os
 from datetime import date, datetime, timedelta, timezone
 from typing import List, Literal, Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from . import detector, land, levels, observations as obs, schema, storage
-from .access import AGRICULTURIST, EVERYONE, STAFF, TECHNICIAN, require_role
+from . import activity, detector, geo, i18n, land, levels, observations as obs, schema, storage
+from .access import AGRICULTURIST, EVERYONE, STAFF, TECHNICIAN, has_permission, require_role
 from .database import get_geo_db, local_today
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/sync", tags=["Mobile"])
 
@@ -37,10 +40,31 @@ def _parse_time(value: str) -> datetime:
     return dt
 
 
+def _deleted_info(db: Session, scan_id: int, viewer: dict) -> Optional[dict]:
+    """Who deleted the observation and when, if the viewer may know (owner or staff)."""
+    if not schema.deleted_records_ready(db):
+        return None
+    row = db.execute(
+        text("SELECT owner_email, deleted_by_role, deleted_at FROM deleted_records WHERE scan_id = :i"),
+        {"i": scan_id},
+    ).first()
+    if row is None or (row.owner_email != viewer["email"] and viewer["role"] not in STAFF):
+        return None
+    return {"deleted_by_role": row.deleted_by_role, "deleted_at": obs._iso(row.deleted_at)}
+
+
+def _not_found(db: Session, scan_id: int, viewer: dict):
+    """404, or 410 Gone when the observation was deleted (so the apps drop
+    their saved copy instead of showing an error)."""
+    if _deleted_info(db, scan_id, viewer):
+        raise HTTPException(status_code=410, detail="This observation was deleted.")
+    raise HTTPException(status_code=404, detail="Observation not found.")
+
+
 def _record_for_owner(db: Session, scan_id: int, viewer: dict) -> dict:
     row = obs.load(db, scan_id)
     if row is None:
-        raise HTTPException(status_code=404, detail="Observation not found.")
+        _not_found(db, scan_id, viewer)
     staff_view = viewer["role"] in STAFF and (
         obs.in_scope(viewer, row.area, row.brgy) or row.user_email == viewer["email"]
     )
@@ -79,6 +103,8 @@ def submit_observation(
     notes: str = Form("", max_length=4000),
     follow_up_of: Optional[int] = Form(None),
     resubmission_of: Optional[int] = Form(None),
+    # GPS accuracy in metres as the phone reported it (newer apps).
+    gps_accuracy: Optional[float] = Form(None),
     db: Session = Depends(get_geo_db),
     user: dict = Depends(require_role(*EVERYONE)),
 ):
@@ -140,10 +166,12 @@ def submit_observation(
 
     # The model runs here, after upload, and only for pest reports.
     ai = detector.analyze(photo) if report_type == "pest" else None
+    if gps_accuracy is not None and not (0 <= gps_accuracy <= 100000):
+        gps_accuracy = None
     try:
         row = _insert_scan(db, user, filename, notes, lat, lng, created_at, client_uuid, report_type,
                            crop_stage, monitoring_method, trap_type, target_pest, target_sex,
-                           follow_up_of, resubmission_of, ai, land_type, elevation_m)
+                           follow_up_of, resubmission_of, ai, land_type, elevation_m, gps_accuracy)
     except IntegrityError:
         # A retry that raced the first upload (slow signal): keep the first copy.
         db.rollback()
@@ -156,17 +184,66 @@ def submit_observation(
         if existing.user_email != user["email"]:
             raise HTTPException(status_code=409, detail="Duplicate upload id.")
         return _record_for_owner(db, existing.id, user)
+
+    no_pests = row.validation_status == "no_pests"
+    activity.log(db, "observation_no_pests" if no_pests else "observation_submitted",
+                 target_type="scan", target_id=row.id,
+                 details={"report_type": report_type, "detection_result": row.detection_result,
+                          "follow_up_of": follow_up_of, "resubmission_of": resubmission_of,
+                          "location_status": row.location_status},
+                 commit=True)
+    if no_pests:
+        _drop_pest_free_photo(db, row.id, filename)
     return _record_for_owner(db, row.id, user)
+
+
+def _drop_pest_free_photo(db: Session, scan_id: int, filename: str) -> None:
+    """The "no_pests_found" result and its metadata are already saved
+    (committed); now the photo is not needed and is removed from storage.
+    If removing it fails, image_deleted_at stays NULL and the photo is kept."""
+    if not storage.delete(storage.SCANS, filename):
+        log.warning("Pest-free photo %s of scan %s could not be deleted; kept.", filename, scan_id)
+        return
+    db.execute(
+        text("UPDATE scans SET image_deleted_at = now(), "
+             "detection_metadata = detection_metadata || jsonb_build_object('image_deleted', true) "
+             "WHERE id = :i"),
+        {"i": scan_id},
+    )
+    db.commit()
 
 
 def _insert_scan(db, user, filename, notes, lat, lng, created_at, client_uuid, report_type, crop_stage,
                  monitoring_method, trap_type, target_pest, target_sex, follow_up_of, resubmission_of, ai,
-                 land_type="", elevation_m=None):
+                 land_type="", elevation_m=None, gps_accuracy=None):
     trap = report_type == "pest" and monitoring_method == "trap"
     # Stored once sql/011 has run; until then the land type is accepted but not kept.
     with_land = schema.land_type_ready(db)
     land_cols = ", land_type, elevation_m" if with_land else ""
     land_vals = ", :land_type, :elevation_m" if with_land else ""
+    # supabase/01_schema.sql section 2026-11: detection result + metadata and
+    # where the GPS point falls. Without those columns nothing changes (and a
+    # pest-free photo is never closed or deleted, since its result couldn't be saved).
+    with_detection = schema.detection_ready(db)
+    result = (ai or {}).get("result") or ("skipped" if not ai else "uncertain")
+    no_pests = with_detection and report_type == "pest" and result == "no_pests_found"
+    det_cols = ", detection_result, detection_metadata" if with_detection else ""
+    det_vals = ", :det_result, CAST(:det_meta AS jsonb)" if with_detection else ""
+    with_location = schema.scan_location_ready(db)
+    loc = {"status": "no_gps"}
+    if lat is not None:
+        try:
+            found = geo.locate(lat, lng, gps_accuracy)
+            loc = {"status": "inside" if found.get("match") else "outside_antique",
+                   "barangay_psgc": found.get("psgc"), "municipality_psgc": found.get("municipality_psgc")}
+        except Exception as e:  # location data missing: keep the point, skip the lookup
+            log.warning("GPS lookup failed: %s", e)
+            loc = {"status": ""}
+    loc_cols = (", location_status, gps_barangay_psgc, gps_municipality_psgc, gps_accuracy_m"
+                if with_location else "")
+    loc_vals = ", :loc_status, :gps_brgy, :gps_mun, :gps_acc" if with_location else ""
+    ret_det = "detection_result" if with_detection else "''"
+    ret_loc = "location_status" if with_location else "''"
     row = db.execute(
         text(
             f"""
@@ -175,7 +252,7 @@ def _insert_scan(db, user, filename, notes, lat, lng, created_at, client_uuid, r
                                target_sex, symptoms, municipality, barangay, submitted_by_role,
                                follow_up_of, resubmission_of, ai_status, ai_pest, ai_confidence, ai_count,
                                ai_countable, ai_detections, ai_message,
-                               total_count, dominant_class, validation_status{land_cols})
+                               total_count, dominant_class, validation_status{land_cols}{det_cols}{loc_cols})
             VALUES (:email, :filename, :notes,
                     CASE WHEN CAST(:lat AS double precision) IS NULL THEN NULL
                          ELSE ST_SetSRID(ST_MakePoint(:lng, :lat), 4326) END,
@@ -183,8 +260,8 @@ def _insert_scan(db, user, filename, notes, lat, lng, created_at, client_uuid, r
                     :target_sex, :symptoms, :area, :brgy, :role, :follow_up, :resubmission_of,
                     :ai_status, :ai_pest, :ai_conf, :ai_count, :ai_countable,
                     CAST(:ai_detections AS jsonb), :ai_message,
-                    :total, :dominant, 'pending'{land_vals})
-            RETURNING id
+                    :total, :dominant, :status{land_vals}{det_vals}{loc_vals})
+            RETURNING id, validation_status, {ret_det} AS detection_result, {ret_loc} AS location_status
             """
         ),
         {
@@ -211,6 +288,13 @@ def _insert_scan(db, user, filename, notes, lat, lng, created_at, client_uuid, r
             "dominant": (ai["pest"] or "") if ai else "",
             "land_type": land_type,
             "elevation_m": elevation_m,
+            "status": "no_pests" if no_pests else "pending",
+            "det_result": result,
+            "det_meta": json.dumps({**((ai or {}).get("metadata") or {}), "image_deleted": False}),
+            "loc_status": loc.get("status", ""),
+            "gps_brgy": loc.get("barangay_psgc"),
+            "gps_mun": loc.get("municipality_psgc"),
+            "gps_acc": gps_accuracy,
         },
     ).first()
     db.commit()
@@ -273,9 +357,10 @@ def scan_image(
     db: Session = Depends(get_geo_db),
     user: dict = Depends(require_role(*EVERYONE)),
 ):
+    deleted_col = "s.image_deleted_at" if schema.detection_ready(db) else "NULL AS image_deleted_at"
     row = db.execute(
         text(
-            f"""SELECT s.image_filename, s.user_email,
+            f"""SELECT s.image_filename, s.user_email, {deleted_col},
                        COALESCE(NULLIF(btrim(s.municipality), ''), btrim(u.region), '') AS area,
                        COALESCE(NULLIF(btrim(s.barangay), ''), btrim(u.barangay), '') AS brgy
                 FROM scans s LEFT JOIN users_fdw u ON u.email = s.user_email WHERE s.id = :i"""
@@ -288,6 +373,8 @@ def scan_image(
         and not (user["role"] in STAFF and obs.in_scope(user, row.area, row.brgy))
     ):
         raise HTTPException(status_code=404, detail="Scan not found.")
+    if row.image_deleted_at is not None:
+        raise HTTPException(status_code=404, detail="The photo was removed because no pests were found.")
     # storage.get refuses unsafe names (rows saved before the upload fix may
     # hold names like "../../x").
     data = storage.get(storage.SCANS, row.image_filename)
@@ -366,6 +453,8 @@ def log_treatment(
             "due": obs.follow_up_due(payload.applied_at),
         },
     )
+    activity.log(db, "treatment_logged", target_type="scan", target_id=scan_id,
+                 details={"treatment": name, "option_type": option_type})
     db.commit()
     return _record_for_owner(db, scan_id, user)
 
@@ -530,7 +619,9 @@ def review(
         )
         obs.log_review(db, scan_id, user, "returned", note=reason)
         if notify_owner:
-            obs.notify(db, row.user_email, scan_id, "returned", "Please retake the photo", reason)
+            obs.notify_t(db, row.user_email, scan_id, "returned", "returned.title", body_text=reason)
+        activity.log(db, "observation_reviewed", target_type="scan", target_id=scan_id,
+                     details={"decision": "returned"})
         db.commit()
         return _record_for_owner(db, scan_id, user)
 
@@ -546,8 +637,9 @@ def review(
         )
         obs.log_review(db, scan_id, user, "escalated", note=reason)
         if notify_owner:
-            obs.notify(db, row.user_email, scan_id, "escalated", "Sent to an agriculturist",
-                       "Your observation needs a closer look. An agriculturist will review it.")
+            obs.notify_t(db, row.user_email, scan_id, "escalated", "escalated.title", "escalated.body")
+        activity.log(db, "observation_reviewed", target_type="scan", target_id=scan_id,
+                     details={"decision": "escalated"})
         db.commit()
         return _record_for_owner(db, scan_id, user)
 
@@ -595,9 +687,8 @@ def review(
         obs.log_review(db, scan_id, user, "validated", pest=pest, count=count, countable=count is not None,
                        level=payload.level, indicators=indicators, diagnosis=diagnosis, guidance=guidance,
                        note="; ".join(changes) or "confirmed the model result")
-        title = f"Validated: {obs.pest_name(pest)}, {payload.level.lower()} infestation"
-        body = "Open the record to see the guidance and your treatment options." if guidance \
-            else "Open the record to see your treatment options."
+        note_keys = ("validated.title", "validated.body_guidance" if guidance else "validated.body", None)
+        note_params = {"pest": obs.pest_name(pest), "level": payload.level}
     else:  # disease report: no model result; the level is confirmed, diagnosis optional unless escalated
         db.execute(
             text(
@@ -614,10 +705,98 @@ def review(
         )
         obs.log_review(db, scan_id, user, "validated", level=payload.level, diagnosis=diagnosis,
                        guidance=guidance, note=f"disease report, {payload.level.lower()} level")
-        title = (f"Disease report reviewed: {payload.level.lower()} level" if not diagnosis
-                 else "Diagnosis and guidance are ready")
-        body = diagnosis or "Open the record to see what the technician found."
+        note_keys = ("disease.title_diagnosis" if diagnosis else "disease.title_level",
+                     None if diagnosis else "disease.body", diagnosis or None)
+        note_params = {"level": payload.level}
     if notify_owner:
-        obs.notify(db, row.user_email, scan_id, "guidance" if escalated or diagnosis else "validated", title, body)
+        title_key, body_key, body_text = note_keys
+        obs.notify_t(db, row.user_email, scan_id, "guidance" if escalated or diagnosis else "validated",
+                     title_key, body_key, body_text, **note_params)
+    activity.log(db, "observation_reviewed", target_type="scan", target_id=scan_id,
+                 details={"decision": "validated", "level": payload.level,
+                          "pest": payload.pest if is_pest else None})
     db.commit()
     return _record_for_owner(db, scan_id, user)
+
+
+# ---------------------------------------------------------------- deletion
+
+RLS_ACTOR = "palay_rls_actor"
+
+
+def _delete_scan_row(db: Session, user: dict, scan_id: int):
+    """DELETE through row level security: as the palay_rls_actor role with the
+    signed-in account set, so the database's own policy (supabase/01_schema.sql
+    section D) must agree too. Returns the deleted row's (id, image_filename),
+    or None when the database refused. Falls back to a plain DELETE (the API's
+    checks only) when the role doesn't exist yet (migration not run)."""
+    rls = False
+    if schema.has_role(db, RLS_ACTOR):
+        try:
+            with db.begin_nested():
+                db.execute(text(f"SET LOCAL ROLE {RLS_ACTOR}"))
+                db.execute(text("SELECT set_config('app.actor_email', :e, true)"), {"e": user["email"]})
+            rls = True
+        except Exception as e:  # e.g. the API's database user isn't a member of the role
+            log.warning("Deleting without the RLS role (%s): %s", RLS_ACTOR, e)
+    row = db.execute(
+        text("DELETE FROM scans WHERE id = :i RETURNING id, image_filename"), {"i": scan_id}
+    ).first()
+    if rls:
+        db.execute(text("RESET ROLE"))
+        db.execute(text("SELECT set_config('app.actor_email', '', true)"))
+    return row
+
+
+@router.delete("/scans/{scan_id}")
+def delete_observation(
+    scan_id: int,
+    reason: str = Query("", max_length=500),
+    db: Session = Depends(get_geo_db),
+    user: dict = Depends(require_role(*STAFF)),
+):
+    """Deletes an observation with its treatments, reviews and notifications,
+    and its photo. Agriculturists: any observation. Technicians: observations
+    in their coverage area and their own. Farmers never (403). The owner gets
+    a notification, and their app drops its copy on the next sync."""
+    if not has_permission(db, user["role"], "records.delete"):
+        raise HTTPException(status_code=403, detail="Your role can't delete records.")
+    row = obs.load(db, scan_id)
+    if row is None:
+        _not_found(db, scan_id, user)
+    if not (obs.in_scope(user, row.area, row.brgy) or row.user_email == user["email"]):
+        raise HTTPException(status_code=404, detail="Observation not found.")
+    reason = reason.strip()
+    snapshot = {
+        "report_type": row.report_type, "status": row.validation_status, "created_at": obs._iso(row.created_at),
+        "municipality": row.area, "barangay": row.brgy, "submitted_by": row.user_email,
+        "ai_pest": row.ai_pest, "confirmed_pest": row.confirmed_pest, "level": row.infestation_level,
+        "count": row.confirmed_count if row.validation_status == "validated" else row.ai_count,
+        "crop_stage": row.crop_phase, "lat": row.lat, "lng": row.lng, "notes": row.notes,
+    }
+    deleted = _delete_scan_row(db, user, scan_id)
+    if deleted is None:
+        db.rollback()
+        raise HTTPException(status_code=403, detail="You can't delete this observation.")
+    if schema.deleted_records_ready(db):
+        db.execute(
+            text("INSERT INTO deleted_records (scan_id, owner_email, deleted_by, deleted_by_role, reason, "
+                 "image_filename, snapshot) VALUES (:i, :o, :by, :r, :reason, :f, CAST(:snap AS jsonb)) "
+                 "ON CONFLICT (scan_id) DO NOTHING"),
+            {"i": scan_id, "o": row.user_email, "by": user["email"], "r": user["role"], "reason": reason,
+             "f": deleted.image_filename, "snap": json.dumps(snapshot, default=str)},
+        )
+    if row.user_email != user["email"]:
+        lang_who = "role.technician" if user["role"] == TECHNICIAN else "role.agriculturist"
+        lang = i18n.language_of(db, row.user_email)
+        params = {"id": scan_id, "date": row.created_at.strftime("%b %d, %Y") if row.created_at else "",
+                  "who": i18n.render(lang_who, lang), "reason": reason}
+        obs.notify_t(db, row.user_email, None, "record_deleted", "deleted.title",
+                     "deleted.body_reason" if reason else "deleted.body", **params)
+    activity.log(db, "observation_deleted", target_type="scan", target_id=scan_id,
+                 details={**snapshot, "reason": reason})
+    db.commit()
+    image_deleted = getattr(row, "image_deleted_at", None) is not None
+    if not image_deleted:
+        storage.delete(storage.SCANS, deleted.image_filename)
+    return {"ok": True, "id": scan_id, "message": "Observation deleted."}

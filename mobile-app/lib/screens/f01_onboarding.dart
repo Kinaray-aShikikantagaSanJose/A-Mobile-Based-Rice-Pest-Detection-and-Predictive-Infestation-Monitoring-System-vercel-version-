@@ -5,8 +5,10 @@ import 'package:flutter/widget_previews.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../app_router.dart';
+import '../l10n/app_language.dart';
 import '../theme.dart';
 import '../widgets/app_widgets.dart';
+import '../widgets/language_button.dart';
 import '../widgets/motion.dart';
 
 /// SharedPreferences flag set once the user finishes (or skips) the tour.
@@ -149,34 +151,39 @@ class _F01OnboardingScreenState extends State<F01OnboardingScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            // Skip (fades out on the last page, space kept so nothing jumps).
+            // Skip (fades out on the last page, space kept so nothing jumps)
+            // and the language picker in the top-right corner.
             FadeSlideIn(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(AppSpacing.hPad, AppSpacing.sm, AppSpacing.md, 0),
-                child: Align(
-                  alignment: Alignment.centerRight,
-                  child: IgnorePointer(
-                    ignoring: _isLastPage,
-                    child: ExcludeSemantics(
-                      excluding: _isLastPage,
-                      child: AnimatedOpacity(
-                        opacity: _isLastPage ? 0 : 1,
-                        duration: AppMotion.medium,
-                        curve: AppMotion.curve,
-                        child: TextButton(
-                          onPressed: _finish,
-                          style: TextButton.styleFrom(
-                            foregroundColor: AppColors.textSecondary,
-                            minimumSize: const Size(64, 44),
-                          ),
-                          child: const Text(
-                            'Skip',
-                            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                child: Row(
+                  children: [
+                    const Spacer(),
+                    IgnorePointer(
+                      ignoring: _isLastPage,
+                      child: ExcludeSemantics(
+                        excluding: _isLastPage,
+                        child: AnimatedOpacity(
+                          opacity: _isLastPage ? 0 : 1,
+                          duration: AppMotion.medium,
+                          curve: AppMotion.curve,
+                          child: TextButton(
+                            onPressed: _finish,
+                            style: TextButton.styleFrom(
+                              foregroundColor: AppColors.textSecondary,
+                              minimumSize: const Size(64, 44),
+                            ),
+                            child: Text(
+                              context.tr('Skip'),
+                              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
+                    const SizedBox(width: AppSpacing.xs),
+                    const LanguageButton(),
+                  ],
                 ),
               ),
             ),
@@ -209,7 +216,7 @@ class _F01OnboardingScreenState extends State<F01OnboardingScreen> {
                     child: AppSwitcher(
                       child: AppPrimaryButton(
                         key: ValueKey(_isLastPage),
-                        label: page.buttonText,
+                        label: context.tr(page.buttonText),
                         icon: _isLastPage ? null : Icons.arrow_forward_rounded,
                         onPressed: _onNextPressed,
                       ),
@@ -290,7 +297,7 @@ class _OnboardingPageState extends State<_OnboardingPage>
         final Widget copy = Column(
           children: staggered([
             Text(
-              data.title,
+              context.tr(data.title),
               textAlign: TextAlign.center,
               style: const TextStyle(
                 fontFamily: AppFonts.display,
@@ -303,7 +310,7 @@ class _OnboardingPageState extends State<_OnboardingPage>
             Padding(
               padding: const EdgeInsets.only(top: AppSpacing.md),
               child: Text(
-                data.description,
+                context.tr(data.description),
                 textAlign: TextAlign.center,
                 style: const TextStyle(
                   fontSize: 14.0,

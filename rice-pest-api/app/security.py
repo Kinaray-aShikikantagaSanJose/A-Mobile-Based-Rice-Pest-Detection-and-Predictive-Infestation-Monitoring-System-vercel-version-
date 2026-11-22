@@ -48,14 +48,19 @@ def verify_password(plain_password: str, password_hash: str) -> bool:
     except ValueError:  # bcrypt 5 rejects passwords over 72 bytes
         return False
 
-def create_access_token(subject: str, role: str) -> str:
+def create_access_token(subject: str, role: str, sid: str | None = None) -> str:
+    """`sid`: the sign-in session (user_sessions.id); signing out ends it."""
     expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     payload = {"sub": subject, "role": role, "exp": expire, "type": "access"}
+    if sid:
+        payload["sid"] = sid
     return jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
 
-def create_refresh_token(subject: str) -> str:
+def create_refresh_token(subject: str, sid: str | None = None) -> str:
     expire = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
     payload = {"sub": subject, "exp": expire, "type": "refresh"}
+    if sid:
+        payload["sid"] = sid
     return jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
 
 def decode_access_token(token: str):

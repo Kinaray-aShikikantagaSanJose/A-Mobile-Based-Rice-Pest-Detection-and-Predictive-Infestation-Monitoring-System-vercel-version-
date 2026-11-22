@@ -3,6 +3,7 @@ import { api } from '../api.js';
 import HotspotMap, { SPREAD_COLORS } from '../components/HotspotMap.jsx';
 import RecordDrawer from '../components/RecordDrawer.jsx';
 import { Button, Empty, ErrorNote, Field, LEVEL_COLOR, LevelBadge, Loading, Notice, Panel, PageHeader, Segmented, Select, Stat, Table } from '../components/ui.jsx';
+import { useT } from '../i18n/index.jsx';
 import { CROP_STAGES, fmtDate, fmtNum, LAND_TYPES, LEVELS, useAsync } from '../lib.js';
 import { filterSample, samplePoints } from '../sampleMapData.js';
 
@@ -15,20 +16,21 @@ const SPREAD_WINDOWS = [
 
 /** Active hotspots by highest level, e.g. on the home summary row. */
 export function HotspotStat({ counts, days }) {
+  const t = useT();
   return (
     <div className="rounded-2xl border border-line bg-white p-4 shadow-sm">
-      <div className="text-xs font-semibold uppercase tracking-wide text-ink2">Active hotspots</div>
+      <div className="text-xs font-semibold uppercase tracking-wide text-ink2">{t('Active hotspots')}</div>
       <div className="mt-1 flex items-end gap-4">
         {LEVELS.map((lv) => (
           <div key={lv}>
             <div className="text-2xl font-bold tabular-nums" style={{ color: LEVEL_COLOR[lv] }}>
               {fmtNum(counts[lv])}
             </div>
-            <div className="text-[11px] font-semibold text-ink2">{lv}</div>
+            <div className="text-[11px] font-semibold text-ink2">{t(lv)}</div>
           </div>
         ))}
       </div>
-      <div className="mt-1 text-xs text-muted">Barangays with validated records, last {days} days</div>
+      <div className="mt-1 text-xs text-muted">{t('Barangays with validated records, last {days} days', { days })}</div>
     </div>
   );
 }
@@ -44,27 +46,28 @@ function Arrow({ bearing, color }) {
 
 /** Directional spread per pest: the label, dates, records used, and the required note. */
 function SpreadPanel({ res, windowDays, onWindow, sample }) {
+  const t = useT();
   const d = res.data;
   return (
     <Panel
       className="mt-6"
-      title="Directional spread"
+      title={t('Directional spread')}
       subtitle={
         d
-          ? `${d.windows[0].name}: ${d.windows[0].label} · ${d.windows[1].name}: ${d.windows[1].label} · needs at least ${d.min_records} validated records with a location in each`
-          : 'Where validated cases cluster in two consecutive windows'
+          ? `${d.windows[0].name}: ${d.windows[0].label} · ${d.windows[1].name}: ${d.windows[1].label} · ${t('needs at least {n} validated records with a location in each', { n: d.min_records })}`
+          : t('Where validated cases cluster in two consecutive windows')
       }
-      actions={<Segmented value={windowDays} onChange={onWindow} options={SPREAD_WINDOWS} />}
+      actions={<Segmented value={windowDays} onChange={onWindow} options={SPREAD_WINDOWS.map(([v, l]) => [v, t(l)])} />}
     >
-      <Notice tone="gray">Based on reported cases only. It shows observed movement, not a forecast.</Notice>
-      {sample && <p className="mt-3 text-xs text-muted">Directional spread always uses real validated records, never the sample data.</p>}
+      <Notice tone="gray">{t('Based on reported cases only. It shows observed movement, not a forecast.')}</Notice>
+      {sample && <p className="mt-3 text-xs text-muted">{t('Directional spread always uses real validated records, never the sample data.')}</p>}
       <div className="mt-3">
         <ErrorNote message={res.error} onRetry={res.reload} />
       </div>
       {!d && res.loading && <Loading />}
       {d && !d.pests.length && (
         <Empty title={d.not_enough_message}>
-          No validated records with a location in {d.windows[0].name} or {d.windows[1].name} match these filters.
+          {t('No validated records with a location in {a} or {b} match these filters.', { a: d.windows[0].name, b: d.windows[1].name })}
         </Empty>
       )}
       {d && d.pests.length > 0 && (
@@ -98,6 +101,7 @@ function SpreadPanel({ res, windowDays, onWindow, sample }) {
 
 /** Filters + map (markers or heatmap) + directional spread + hotspot list. Validated observations only. */
 export function HotspotExplorer({ viewer, mapClassName }) {
+  const t = useT();
   const isAgri = viewer.role === 'agriculturist';
   const [filters, setFilters] = useState(NO_FILTERS);
   const [openId, setOpenId] = useState(null);
@@ -128,44 +132,50 @@ export function HotspotExplorer({ viewer, mapClassName }) {
   return (
     <>
       <Panel
-        title="Hotspot map"
+        title={t('Hotspot map')}
         subtitle={
           sample
-            ? `SAMPLE DATA · ${fmtNum(points.length)} generated points, not real records`
+            ? t('SAMPLE DATA · {n} generated points, not real records', { n: fmtNum(points.length) })
             : d
-              ? `Validated observations only · ${fmtNum(d.points.length)} with GPS${filtered ? ' match the filters' : ''} · ${fmtNum(d.hotspots.length)} barangay hotspot${d.hotspots.length === 1 ? '' : 's'}`
-              : 'Validated observations only'
+              ? `${t('Validated observations only')} · ${
+                  filtered ? t('{n} with GPS match the filters', { n: fmtNum(d.points.length) }) : t('{n} with GPS', { n: fmtNum(d.points.length) })
+                } · ${
+                  d.hotspots.length === 1
+                    ? t('{n} barangay hotspot', { n: fmtNum(d.hotspots.length) })
+                    : t('{n} barangay hotspots', { n: fmtNum(d.hotspots.length) })
+                }`
+              : t('Validated observations only')
         }
         actions={
           filtered && (
             <Button variant="ghost" size="sm" onClick={() => setFilters(NO_FILTERS)}>
-              Clear filters
+              {t('Clear filters')}
             </Button>
           )
         }
       >
         <div className={`mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 ${isAgri ? 'xl:grid-cols-7' : 'xl:grid-cols-6'}`}>
-          <Field label="Pest type">
-            <Select value={filters.pest} onChange={set('pest')} placeholder="All" options={d?.facets.pests || []} />
+          <Field label={t('Pest type')}>
+            <Select value={filters.pest} onChange={set('pest')} placeholder={t('All')} options={d?.facets.pests || []} />
           </Field>
-          <Field label="From">
+          <Field label={t('From')}>
             <input type="date" className="input" value={filters.start} onChange={(e) => set('start')(e.target.value)} />
           </Field>
-          <Field label="To">
+          <Field label={t('To')}>
             <input type="date" className="input" value={filters.end} onChange={(e) => set('end')(e.target.value)} />
           </Field>
-          <Field label="Crop stage">
-            <Select value={filters.crop_stage} onChange={set('crop_stage')} placeholder="All stages" options={CROP_STAGES} />
+          <Field label={t('Crop stage')}>
+            <Select value={filters.crop_stage} onChange={set('crop_stage')} placeholder={t('All stages')} options={CROP_STAGES.map((s) => [s, t(s)])} />
           </Field>
-          <Field label="Infestation level">
-            <Select value={filters.level} onChange={set('level')} placeholder="All levels" options={LEVELS} />
+          <Field label={t('Infestation level')}>
+            <Select value={filters.level} onChange={set('level')} placeholder={t('All levels')} options={LEVELS} />
           </Field>
-          <Field label="Land type">
-            <Select value={filters.land_type} onChange={set('land_type')} placeholder="All land types" options={LAND_TYPES} />
+          <Field label={t('Land type')}>
+            <Select value={filters.land_type} onChange={set('land_type')} placeholder={t('All land types')} options={LAND_TYPES.map(([v, l]) => [v, t(l)])} />
           </Field>
           {isAgri && (
-            <Field label="Municipality">
-              <Select value={filters.municipality} onChange={set('municipality')} placeholder="All" options={d?.facets.municipalities || []} />
+            <Field label={t('Municipality')}>
+              <Select value={filters.municipality} onChange={set('municipality')} placeholder={t('All')} options={d?.facets.municipalities || []} />
             </Field>
           )}
         </div>
@@ -174,8 +184,8 @@ export function HotspotExplorer({ viewer, mapClassName }) {
             value={mode}
             onChange={setMode}
             options={[
-              ['markers', 'Markers'],
-              ['heat', 'Heatmap'],
+              ['markers', t('Markers')],
+              ['heat', t('Heatmap')],
             ]}
           />
           {mode === 'heat' && (
@@ -183,27 +193,27 @@ export function HotspotExplorer({ viewer, mapClassName }) {
               value={weightBy}
               onChange={setWeightBy}
               options={[
-                ['level', 'Weight: infestation level'],
-                ['cases', 'Weight: number of cases'],
+                ['level', t('Weight: infestation level')],
+                ['cases', t('Weight: number of cases')],
               ]}
             />
           )}
           <label className="ml-auto flex items-center gap-2 text-xs font-semibold text-ink2">
             <input type="checkbox" checked={sample} onChange={(e) => setSample(e.target.checked)} />
-            Preview with sample data (5,000 points)
+            {t('Preview with sample data (5,000 points)')}
           </label>
         </div>
         {sample && (
           <div className="mb-4">
             <Notice tone="orange">
-              <b>Sample data.</b> These points are generated for trying the map with many records. They are not real observations;
-              untick the box to see validated records.
+              <b>{t('Sample data.')}</b>{' '}
+              {t('These points are generated for trying the map with many records. They are not real observations; untick the box to see validated records.')}
             </Notice>
           </div>
         )}
         <ErrorNote message={res.error} onRetry={res.reload} />
         {!d && res.loading && !sample ? (
-          <Loading label="Loading map…" />
+          <Loading label={t('Loading map…')} />
         ) : (
           (d || sample) && (
             <HotspotMap
@@ -223,19 +233,19 @@ export function HotspotExplorer({ viewer, mapClassName }) {
       <SpreadPanel res={spread} windowDays={windowDays} onWindow={setWindowDays} sample={sample} />
 
       {d && (
-        <Panel className="mt-6" title="Barangay hotspots" subtitle="Highest confirmed level first. Click a row to zoom the map to it." bodyClassName="">
+        <Panel className="mt-6" title={t('Barangay hotspots')} subtitle={t('Highest confirmed level first. Click a row to zoom the map to it.')} bodyClassName="">
           <Table
             rowKey="key"
             rows={d.hotspots.map((h) => ({ ...h, key: `${h.municipality}|${h.barangay}` }))}
             onRowClick={(h) => setFocus({ lat: h.lat, lng: h.lng, at: Date.now() })}
-            empty={<Empty title="No hotspots">No validated pest observations with a location match these filters.</Empty>}
+            empty={<Empty title={t('No hotspots')}>{t('No validated pest observations with a location match these filters.')}</Empty>}
             columns={[
-              { key: 'barangay', label: 'Barangay', className: 'font-medium' },
-              { key: 'municipality', label: 'Municipality' },
-              { key: 'level', label: 'Highest level', render: (h) => <LevelBadge level={h.level} /> },
-              { key: 'records', label: 'Records', align: 'right', render: (h) => fmtNum(h.records) },
-              { key: 'pests', label: 'Pests', render: (h) => <span className="text-ink2">{h.pests.join(', ')}</span> },
-              { key: 'latest', label: 'Latest', render: (h) => fmtDate(h.latest) },
+              { key: 'barangay', label: t('Barangay'), className: 'font-medium' },
+              { key: 'municipality', label: t('Municipality') },
+              { key: 'level', label: t('Highest level'), render: (h) => <LevelBadge level={h.level} /> },
+              { key: 'records', label: t('Records'), align: 'right', render: (h) => fmtNum(h.records) },
+              { key: 'pests', label: t('Pests'), render: (h) => <span className="text-ink2">{h.pests.join(', ')}</span> },
+              { key: 'latest', label: t('Latest'), render: (h) => fmtDate(h.latest) },
             ]}
           />
         </Panel>
@@ -247,26 +257,27 @@ export function HotspotExplorer({ viewer, mapClassName }) {
 }
 
 export default function MapPage({ viewer }) {
+  const t = useT();
   const isAgri = viewer.role === 'agriculturist';
   const overview = useAsync(() => (isAgri ? Promise.resolve(null) : api.overview()), [isAgri]);
   const o = overview.data;
   return (
     <div>
       <PageHeader
-        title="Hotspot map"
+        title={t('Hotspot map')}
         description={
           isAgri
-            ? 'The whole province. Only validated observations appear; hotspots are barangays coloured by the highest infestation level a reviewer confirmed.'
-            : 'Your coverage area. Only validated observations appear; hotspots are barangays coloured by the highest infestation level a reviewer confirmed.'
+            ? t('The whole province. Only validated observations appear; hotspots are barangays coloured by the highest infestation level a reviewer confirmed.')
+            : t('Your coverage area. Only validated observations appear; hotspots are barangays coloured by the highest infestation level a reviewer confirmed.')
         }
         area={isAgri ? undefined : viewer.area_label}
       />
       {o && (
         <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <Stat label="For validation" value={fmtNum(o.pending)} tone={o.pending ? 'orange' : 'muted'} hint="In your queue" />
-          <Stat label="Validated this month" value={fmtNum(o.validated_this_month)} tone="brand" />
+          <Stat label={t('For validation')} value={fmtNum(o.pending)} tone={o.pending ? 'orange' : 'muted'} hint={t('In your queue')} />
+          <Stat label={t('Validated this month')} value={fmtNum(o.validated_this_month)} tone="brand" />
           <HotspotStat counts={o.hotspots} days={o.hotspot_days} />
-          <Stat label="Escalated" value={fmtNum(o.escalated)} tone={o.escalated ? 'red' : 'muted'} hint="Waiting for an agriculturist" />
+          <Stat label={t('Escalated')} value={fmtNum(o.escalated)} tone={o.escalated ? 'red' : 'muted'} hint={t('Waiting for an agriculturist')} />
         </div>
       )}
       <HotspotExplorer viewer={viewer} />

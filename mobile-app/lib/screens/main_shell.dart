@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 
 import '../app_router.dart';
 import '../controllers/auth_controller.dart';
+import '../l10n/app_language.dart';
 import '../services/notification_service.dart';
 import '../services/sync_service.dart';
 import '../theme.dart';
@@ -221,6 +222,8 @@ class _NavItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final Color color = active ? AppColors.primary : AppColors.textMuted;
+    // Tab labels are English in _TabSpec; shown in the chosen language.
+    final label = context.tr(tab.label);
     Widget icon = Icon(active ? tab.activeIcon : tab.icon, size: 24, color: color);
     if (tab.badge != null) {
       icon = ValueListenableBuilder<int>(
@@ -237,7 +240,7 @@ class _NavItem extends StatelessWidget {
     return Semantics(
       button: true,
       selected: active,
-      label: tab.label,
+      label: label,
       child: InkResponse(
         onTap: onTap,
         radius: 36,
@@ -258,7 +261,7 @@ class _NavItem extends StatelessWidget {
             ),
             const SizedBox(height: 4),
             Text(
-              tab.label,
+              label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
@@ -283,7 +286,7 @@ class _ScanButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return Semantics(
       button: true,
-      label: 'New observation',
+      label: context.tr('New observation'),
       child: PressScale(
         scale: 0.92,
         child: InkResponse(
@@ -313,9 +316,9 @@ class _ScanButton extends StatelessWidget {
                 child: const Icon(Icons.photo_camera_rounded, color: AppColors.surface, size: 26),
               ),
               const SizedBox(height: 2),
-              const Text(
-                'Scan',
-                style: TextStyle(color: AppColors.primaryDark, fontSize: 11.5, fontWeight: FontWeight.w800),
+              Text(
+                context.tr('Scan'),
+                style: const TextStyle(color: AppColors.primaryDark, fontSize: 11.5, fontWeight: FontWeight.w800),
               ),
             ],
           ),

@@ -5,6 +5,8 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
 import '../app_router.dart';
+import '../controllers/auth_controller.dart';
+import '../l10n/app_language.dart';
 import '../models/record.dart';
 import '../services/api_client.dart';
 import '../services/sync_service.dart';
@@ -14,6 +16,7 @@ import '../widgets/app_widgets.dart';
 import '../widgets/detection_photo.dart';
 import '../widgets/scan_map.dart';
 import '../widgets/shell_scope.dart';
+import 'f24_record_detail.dart' show confirmDeleteRecord;
 import 'f47_submission_done.dart';
 
 /// Reviewing one observation, in the order of the process flow:
@@ -53,6 +56,8 @@ class _F61ReviewObservationState extends State<F61ReviewObservation> {
   final TextEditingController _diagnosis = TextEditingController();
   final TextEditingController _guidance = TextEditingController();
 
+  bool get _isTech => AuthControllerImpl.instance.role == AppRole.technician;
+
   @override
   void initState() {
     super.initState();
@@ -83,8 +88,20 @@ class _F61ReviewObservationState extends State<F61ReviewObservation> {
       });
       if (!r.isDisease) _refreshSuggestion(immediate: true);
     } on ApiException catch (e) {
-      if (mounted) setState(() => _error = e.message);
+      if (!mounted) return;
+      if (e.statusCode == 410) {
+        // Deleted on the server meanwhile: back to the queue, which reloads.
+        _snack(context.tr('This observation was deleted.'));
+        popOrGoHome(context, true);
+        return;
+      }
+      setState(() => _error = e.message);
     }
+  }
+
+  /// Technicians: delete this observation for everyone, then back to the queue.
+  Future<void> _delete() async {
+    if (await confirmDeleteRecord(context, widget.scanId) && mounted) popOrGoHome(context, true);
   }
 
   bool get _canAct => _r?.status == 'pending';
@@ -99,6 +116,28 @@ class _F61ReviewObservationState extends State<F61ReviewObservation> {
     ..hideCurrentSnackBar()
     ..showSnackBar(SnackBar(content: Text(msg)));
 
+  /// The server's reasons for the suggested level come in English; shown in
+  /// the app language.
+  String _reasonLabel(String reason) {
+    if (context.lang == AppLang.en) return reason;
+    const bump = '+1 level: ';
+    if (reason.startsWith(bump)) {
+      return context.tr('+1 level: {damage}', {'damage': context.tr(reason.substring(bump.length))});
+    }
+    final m = RegExp(r'^Count (\d+): (LOW|MEDIUM|HIGH) for (.+) \(MEDIUM from ([\d.]+), HIGH from ([\d.]+)\)$')
+        .firstMatch(reason);
+    if (m != null) {
+      return context.tr('Count {n}: {level} for {stage} (MEDIUM from {medium}, HIGH from {high})', {
+        'n': m[1],
+        'level': levelLabel(m[2]),
+        'stage': context.tr(m[3]!),
+        'medium': m[4],
+        'high': m[5],
+      });
+    }
+    return context.tr(reason);
+  }
+
   // ---------------------------------------------------------------- step 1: confirm or correct
 
   Future<void> _correctPest() async {
@@ -109,7 +148,7 @@ class _F61ReviewObservationState extends State<F61ReviewObservation> {
           shrinkWrap: true,
           padding: const EdgeInsets.fromLTRB(AppSpacing.hPad, 0, AppSpacing.hPad, AppSpacing.lg),
           children: [
-            const Text('Which pest is it?', style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800)),
+            Text(ctx.tr('Which pest is it?'), style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w800)),
             const SizedBox(height: AppSpacing.sm),
             for (final k in kPestKeys)
               ListTile(
@@ -149,11 +188,11 @@ class _F61ReviewObservationState extends State<F61ReviewObservation> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const Text('How many insects?', style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800)),
+                Text(ctx.tr('How many insects?'), style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w800)),
                 const SizedBox(height: 4),
-                const Text(
-                  'Count only when the insects can be told apart. Otherwise mark it not countable.',
-                  style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+                Text(
+                  ctx.tr('Count only when the insects can be told apart. Otherwise mark it not countable.'),
+                  style: const TextStyle(color: AppColors.textSecondary, fontSize: 13),
                 ),
                 const SizedBox(height: AppSpacing.md),
                 TextField(
@@ -161,18 +200,18 @@ class _F61ReviewObservationState extends State<F61ReviewObservation> {
                   autofocus: true,
                   keyboardType: TextInputType.number,
                   inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  decoration: const InputDecoration(labelText: 'Count', prefixIcon: Icon(Icons.tag_rounded)),
+                  decoration: InputDecoration(labelText: ctx.tr('Count'), prefixIcon: const Icon(Icons.tag_rounded)),
                 ),
                 const SizedBox(height: AppSpacing.md),
                 AppPrimaryButton(
-                  label: 'Use this count',
+                  label: ctx.tr('Use this count'),
                   onPressed: () {
                     final n = int.tryParse(ctrl.text);
                     if (n != null) Navigator.pop(ctx, (n, true));
                   },
                 ),
                 const SizedBox(height: AppSpacing.sm),
-                AppSecondaryButton(label: 'Not countable', onPressed: () => Navigator.pop(ctx, (null, false))),
+                AppSecondaryButton(label: ctx.tr('Not countable'), onPressed: () => Navigator.pop(ctx, (null, false))),
               ],
             ),
           ),
@@ -219,7 +258,7 @@ class _F61ReviewObservationState extends State<F61ReviewObservation> {
           if (!_levelTouched) _level = s.level;
         });
       } on ApiException catch (e) {
-        if (mounted) _snack(e.message);
+        if (mounted) _snack(context.tr(e.message));
       }
     });
   }
@@ -234,6 +273,7 @@ class _F61ReviewObservationState extends State<F61ReviewObservation> {
     });
   }
 
+  /// Why Validate can't be sent yet (English; shown translated).
   String? get _validateBlocker {
     final r = _r!;
     if (!r.isDisease) {
@@ -250,6 +290,7 @@ class _F61ReviewObservationState extends State<F61ReviewObservation> {
   Future<void> _submit() async {
     final r = _r!;
     final Map<String, dynamic> body;
+    // Done titles/messages are translated by the result screen; the rest here.
     final String confirmTitle, confirmMessage, doneTitle, doneMessage;
     final IconData icon;
     final Color color;
@@ -257,26 +298,26 @@ class _F61ReviewObservationState extends State<F61ReviewObservation> {
     switch (_decision) {
       case _Decision.returnPhoto:
         body = {'action': 'return', 'reason': _reason.text.trim()};
-        confirmTitle = 'Return to the farmer?';
-        confirmMessage = 'They will be asked to take the photo again.';
+        confirmTitle = context.tr('Return to the farmer?');
+        confirmMessage = context.tr('They will be asked to take the photo again.');
         doneTitle = 'Returned to the farmer';
         doneMessage = 'They will see your note and send a new photo.';
         icon = Icons.replay_rounded;
         color = AppColors.danger;
-        summary.add(('Reason', _reason.text.trim()));
+        summary.add((context.tr('Reason'), context.tr(_reason.text.trim())));
       case _Decision.escalate:
         body = {'action': 'escalate', 'reason': _reason.text.trim()};
-        confirmTitle = 'Refer to an agriculturist?';
-        confirmMessage = 'The case leaves your queue and goes to an agriculturist.';
+        confirmTitle = context.tr('Refer to an agriculturist?');
+        confirmMessage = context.tr('The case leaves your queue and goes to an agriculturist.');
         doneTitle = 'Sent to an agriculturist';
         doneMessage = 'An agriculturist will diagnose it and guide the farmer.';
         icon = Icons.forward_to_inbox_rounded;
         color = AppColors.purple;
-        summary.add(('Reason', _reason.text.trim()));
+        summary.add((context.tr('Reason'), context.tr(_reason.text.trim())));
       case _Decision.validate:
         final blocker = _validateBlocker;
         if (blocker != null) {
-          _snack(blocker);
+          _snack(context.tr(blocker));
           return;
         }
         body = {
@@ -291,17 +332,20 @@ class _F61ReviewObservationState extends State<F61ReviewObservation> {
           'diagnosis': _diagnosis.text.trim(),
           'guidance': _guidance.text.trim(),
         };
-        confirmTitle = 'Validate this report?';
-        confirmMessage = 'The farmer gets the result and the treatment options for their crop stage.';
+        confirmTitle = context.tr('Validate this report?');
+        confirmMessage = context.tr('The farmer gets the result and the treatment options for their crop stage.');
         doneTitle = 'Validated';
         doneMessage = 'The farmer has been notified and can now see the treatment options.';
         icon = Icons.verified_rounded;
         color = AppColors.primary;
         if (!r.isDisease) {
-          summary.add(('Pest', pestName(_pest)));
-          summary.add(('Count', _countable ? '$_count' : 'Not countable'));
+          summary.add((context.tr('Pest'), pestName(_pest)));
+          summary.add((context.tr('Count'), _countable ? '$_count' : context.tr('Not countable')));
         }
-        summary.add(('Level', '${levelLabel(_level)}${_overridden ? ' (overridden)' : ''}'));
+        summary.add((
+          context.tr('Level'),
+          _overridden ? context.tr('{level} (overridden)', {'level': levelLabel(_level)}) : levelLabel(_level),
+        ));
       case null:
         return;
     }
@@ -309,7 +353,7 @@ class _F61ReviewObservationState extends State<F61ReviewObservation> {
       context,
       title: confirmTitle,
       message: confirmMessage,
-      confirmLabel: 'Yes, send',
+      confirmLabel: context.tr('Yes, send'),
       icon: icon,
       color: color,
       summary: summary,
@@ -349,9 +393,20 @@ class _F61ReviewObservationState extends State<F61ReviewObservation> {
         child: Column(
           children: [
             AppHeader(
-              title: r == null ? 'Review' : (r.isDisease ? 'Disease report' : 'Pest report'),
-              subtitle: r == null ? null : 'Waiting ${waitingLabel(r.createdAt)} · #${r.id}',
+              title: context.tr(r == null ? 'Review' : (r.isDisease ? 'Disease report' : 'Pest report')),
+              subtitle: r == null
+                  ? null
+                  : context.tr('Waiting {time} · #{id}', {'time': waitingLabel(r.createdAt), 'id': r.id}),
               onBack: () => context.pop(false),
+              actions: [
+                if (r != null && _isTech)
+                  AppCircleButton(
+                    icon: Icons.delete_outline_rounded,
+                    tooltip: context.tr('Delete record'),
+                    color: AppColors.danger,
+                    onTap: _delete,
+                  ),
+              ],
             ),
             Expanded(
               child: r == null
@@ -359,9 +414,9 @@ class _F61ReviewObservationState extends State<F61ReviewObservation> {
                       ? const Center(child: CircularProgressIndicator())
                       : AppEmptyState(
                           icon: Icons.cloud_off_rounded,
-                          title: 'Can\'t open this report',
-                          message: _error!,
-                          actionLabel: 'Try again',
+                          title: context.tr('Can\'t open this report'),
+                          message: context.tr(_error!),
+                          actionLabel: context.tr('Try again'),
                           onAction: _load,
                           color: AppColors.danger,
                         ))
@@ -387,15 +442,18 @@ class _F61ReviewObservationState extends State<F61ReviewObservation> {
                               children: [
                                 StatusChip(state: r.state),
                                 const SizedBox(width: AppSpacing.md),
-                                const Expanded(child: Text('Already handled.')),
+                                Expanded(child: Text(context.tr('Already handled.'))),
                               ],
                             ),
                           )
                         else ...[
-                          _StepTitle(number: 1, title: r.isDisease ? 'Check the symptoms' : 'Check the model result'),
+                          _StepTitle(
+                            number: 1,
+                            title: context.tr(r.isDisease ? 'Check the symptoms' : 'Check the model result'),
+                          ),
                           r.isDisease ? _diseaseCheck(r) : _pestCheck(r),
                           const SizedBox(height: AppSpacing.xl),
-                          const _StepTitle(number: 2, title: 'Your decision'),
+                          _StepTitle(number: 2, title: context.tr('Your decision')),
                           ..._decisions(),
                           if (_decision != null) ...[
                             const SizedBox(height: AppSpacing.lg),
@@ -418,16 +476,19 @@ class _F61ReviewObservationState extends State<F61ReviewObservation> {
             child: InfoBanner(
               icon: Icons.replay_rounded,
               color: AppColors.primary,
-              message: 'New photo for report #${r.resubmissionOf}, which was returned because the photo was unclear.',
+              message: context.tr(
+                'New photo for report #{id}, which was returned because the photo was unclear.',
+                {'id': r.resubmissionOf},
+              ),
             ),
           ),
         if (r.followUpOf != null)
-          const Padding(
-            padding: EdgeInsets.only(top: AppSpacing.md),
+          Padding(
+            padding: const EdgeInsets.only(top: AppSpacing.md),
             child: InfoBanner(
               icon: Icons.healing_rounded,
               color: AppColors.sky,
-              message: 'Follow-up check: this photo shows the field after a treatment.',
+              message: context.tr('Follow-up check: this photo shows the field after a treatment.'),
             ),
           ),
       ];
@@ -446,21 +507,29 @@ class _F61ReviewObservationState extends State<F61ReviewObservation> {
             ],
           ),
         );
+    // Stored values (crop stage, method, trap, target) stay English; shown translated.
     return AppCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          row(Icons.person_outline_rounded, 'Submitted by', '${r.submitterName}${r.submitterRole == 'technician' ? ' (technician)' : ''}'),
-          if (r.submitterPhone.isNotEmpty) row(Icons.phone_outlined, 'Phone', r.submitterPhone),
-          row(Icons.location_on_outlined, 'Area', [r.barangay, r.municipality].where((x) => x.isNotEmpty).join(', ')),
-          row(Icons.schedule_rounded, 'Sent', formatDateTime(r.createdAt)),
-          row(Icons.grass_rounded, 'Crop stage', r.cropStage),
-          row(Icons.terrain_rounded, 'Land type', landTypeLabel(r.landType)),
-          if (!r.isDisease) row(Icons.visibility_outlined, 'Method', r.monitoringMethod),
-          if (trap) row(Icons.lightbulb_outline_rounded, 'Trap or lure', r.trapType),
-          if (trap) row(Icons.bug_report_outlined, 'Target pest', r.targetPest),
-          if (trap) row(Icons.wc_rounded, 'Target sex', r.targetSex),
-          if (!r.isDisease) row(Icons.notes_rounded, 'Farmer notes', r.notes),
+          row(
+            Icons.person_outline_rounded,
+            context.tr('Submitted by'),
+            r.submitterRole == 'technician'
+                ? context.tr('{name} (technician)', {'name': r.submitterName})
+                : r.submitterName,
+          ),
+          if (r.submitterPhone.isNotEmpty) row(Icons.phone_outlined, context.tr('Phone'), r.submitterPhone),
+          row(Icons.location_on_outlined, context.tr('Area'),
+              [r.barangay, r.municipality].where((x) => x.isNotEmpty).join(', ')),
+          row(Icons.schedule_rounded, context.tr('Sent'), formatDateTime(r.createdAt)),
+          row(Icons.grass_rounded, context.tr('Crop stage'), context.tr(r.cropStage)),
+          row(Icons.terrain_rounded, context.tr('Land type'), landTypeLabel(r.landType)),
+          if (!r.isDisease) row(Icons.visibility_outlined, context.tr('Method'), context.tr(r.monitoringMethod)),
+          if (trap) row(Icons.lightbulb_outline_rounded, context.tr('Trap or lure'), context.tr(r.trapType)),
+          if (trap) row(Icons.bug_report_outlined, context.tr('Target pest'), context.tr(r.targetPest)),
+          if (trap) row(Icons.wc_rounded, context.tr('Target sex'), context.tr(r.targetSex)),
+          if (!r.isDisease) row(Icons.notes_rounded, context.tr('Farmer notes'), r.notes),
           if (r.lat != null && r.lng != null) ...[
             const SizedBox(height: AppSpacing.sm),
             ClipRRect(
@@ -491,9 +560,14 @@ class _F61ReviewObservationState extends State<F61ReviewObservation> {
                 Expanded(
                   child: Text(
                     !aiNamed
-                        ? (ai?.message.isNotEmpty == true ? ai!.message : 'The model result names no pest.')
-                        : 'Model result: ${ai!.pestLabel} · ${((ai.confidence ?? 0) * 100).round()}% sure · '
-                            '${ai.count != null ? plural(ai.count!, 'insect') : 'not countable'}',
+                        ? (ai?.message.isNotEmpty == true
+                            ? context.tr(ai!.message)
+                            : context.tr('The model result names no pest.'))
+                        : context.tr('Model result: {pest} · {sure} · {count}', {
+                            'pest': ai!.pestLabel,
+                            'sure': context.tr('{n}% sure', {'n': ((ai.confidence ?? 0) * 100).round()}),
+                            'count': ai.count != null ? plural(ai.count!, 'insect') : context.tr('not countable'),
+                          }),
                     style: const TextStyle(height: 1.35, fontWeight: FontWeight.w600, fontSize: 13.5),
                   ),
                 ),
@@ -503,23 +577,33 @@ class _F61ReviewObservationState extends State<F61ReviewObservation> {
           if (ai != null && aiNamed && ai.count == null && ai.message.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 6),
-              child: Text(ai.message, style: const TextStyle(color: AppColors.textMuted, fontSize: 13, height: 1.35)),
+              child: Text(context.tr(ai.message),
+                  style: const TextStyle(color: AppColors.textMuted, fontSize: 13, height: 1.35)),
             ),
           const SizedBox(height: AppSpacing.md),
-          _editRow('Pest', _pest == null ? 'Not named yet' : pestName(_pest), _correctPest,
-              action: _pest == null ? 'Name it' : 'Correct'),
+          _editRow(context.tr('Pest'), _pest == null ? context.tr('Not named yet') : pestName(_pest), _correctPest,
+              action: context.tr(_pest == null ? 'Name it' : 'Correct')),
           const Divider(height: 1),
-          _editRow('Count', _countable ? (_count == null ? 'Not entered yet' : '$_count') : 'Not countable', _correctCount,
-              action: _countable && _count == null ? 'Enter' : 'Correct'),
+          _editRow(
+              context.tr('Count'),
+              _countable
+                  ? (_count == null ? context.tr('Not entered yet') : '$_count')
+                  : context.tr('Not countable'),
+              _correctCount,
+              action: context.tr(_countable && _count == null ? 'Enter' : 'Correct')),
           const SizedBox(height: AppSpacing.sm),
           if (_sameAsAi)
-            const AppChip(label: 'Confirming the model result', color: AppColors.primary, icon: Icons.check_circle_rounded)
+            AppChip(
+              label: context.tr('Confirming the model result'),
+              color: AppColors.primary,
+              icon: Icons.check_circle_rounded,
+            )
           else if (_pest != null)
             Row(
               children: [
-                const AppChip(label: 'Corrected by you', color: AppColors.orange, icon: Icons.edit_rounded),
+                AppChip(label: context.tr('Corrected by you'), color: AppColors.orange, icon: Icons.edit_rounded),
                 const Spacer(),
-                if (aiNamed) TextButton(onPressed: _resetToAi, child: const Text('Use the model result')),
+                if (aiNamed) TextButton(onPressed: _resetToAi, child: Text(context.tr('Use the model result'))),
               ],
             ),
         ],
@@ -531,10 +615,13 @@ class _F61ReviewObservationState extends State<F61ReviewObservation> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('There is no model result for disease reports. Look at the photo and what the farmer describes.',
-                style: TextStyle(color: AppColors.textMuted, fontSize: 13, height: 1.4)),
+            Text(
+                context.tr(
+                    'There is no model result for disease reports. Look at the photo and what the farmer describes.'),
+                style: const TextStyle(color: AppColors.textMuted, fontSize: 13, height: 1.4)),
             const SizedBox(height: AppSpacing.md),
-            const Text('Symptoms', style: TextStyle(color: AppColors.textSecondary, fontWeight: FontWeight.w600)),
+            Text(context.tr('Symptoms'),
+                style: const TextStyle(color: AppColors.textSecondary, fontWeight: FontWeight.w600)),
             const SizedBox(height: 2),
             SelectableText(r.notes.isEmpty ? '—' : r.notes,
                 style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, height: 1.4)),
@@ -545,8 +632,8 @@ class _F61ReviewObservationState extends State<F61ReviewObservation> {
   List<Widget> _decisions() => [
         ChoiceTile(
           icon: Icons.replay_rounded,
-          title: 'Return',
-          subtitle: 'The photo is unclear. The farmer retakes it.',
+          title: context.tr('Return'),
+          subtitle: context.tr('The photo is unclear. The farmer retakes it.'),
           selected: _decision == _Decision.returnPhoto,
           color: AppColors.danger,
           onTap: () => _choose(_Decision.returnPhoto),
@@ -554,16 +641,16 @@ class _F61ReviewObservationState extends State<F61ReviewObservation> {
         const SizedBox(height: AppSpacing.sm),
         ChoiceTile(
           icon: Icons.verified_rounded,
-          title: 'Validate',
-          subtitle: 'Confirm or override the infestation level.',
+          title: context.tr('Validate'),
+          subtitle: context.tr('Confirm or override the infestation level.'),
           selected: _decision == _Decision.validate,
           onTap: () => _choose(_Decision.validate),
         ),
         const SizedBox(height: AppSpacing.sm),
         ChoiceTile(
           icon: Icons.forward_to_inbox_rounded,
-          title: 'Escalate',
-          subtitle: 'Complex case. Refer it to an agriculturist.',
+          title: context.tr('Escalate'),
+          subtitle: context.tr('Complex case. Refer it to an agriculturist.'),
           selected: _decision == _Decision.escalate,
           color: AppColors.purple,
           onTap: () => _choose(_Decision.escalate),
@@ -573,21 +660,24 @@ class _F61ReviewObservationState extends State<F61ReviewObservation> {
   List<Widget> _decisionForm(Record r) => switch (_decision!) {
         _Decision.returnPhoto => _reasonForm(
             quick: const ['Photo too blurry', 'Too far away, move closer', 'Too dark', 'Insects not visible', 'Wrong photo'],
-            hint: 'What should the farmer fix? They will see this.',
-            button: 'Return to the farmer',
+            hint: context.tr('What should the farmer fix? They will see this.'),
+            button: context.tr('Return to the farmer'),
             icon: Icons.replay_rounded,
             color: AppColors.danger,
           ),
         _Decision.escalate => _reasonForm(
             quick: const ['Unclear what pest this is', 'Unusual damage', 'Possible outbreak', 'Not one of the four pests'],
-            hint: 'Why does it need an agriculturist?',
-            button: 'Refer to an agriculturist',
+            hint: context.tr('Why does it need an agriculturist?'),
+            button: context.tr('Refer to an agriculturist'),
             icon: Icons.forward_to_inbox_rounded,
             color: AppColors.purple,
           ),
         _Decision.validate => _validateForm(r),
       };
 
+  /// [quick] reasons are English: the chip shows them translated, but the
+  /// English text goes in the field and to the server, so the farmer's app
+  /// can show it in the farmer's language.
   List<Widget> _reasonForm({
     required List<String> quick,
     required String hint,
@@ -596,7 +686,8 @@ class _F61ReviewObservationState extends State<F61ReviewObservation> {
     required Color color,
   }) =>
       [
-        const Text('Quick reasons', style: TextStyle(color: AppColors.textSecondary, fontWeight: FontWeight.w600)),
+        Text(context.tr('Quick reasons'),
+            style: const TextStyle(color: AppColors.textSecondary, fontWeight: FontWeight.w600)),
         const SizedBox(height: AppSpacing.sm),
         Wrap(
           spacing: 8,
@@ -604,7 +695,7 @@ class _F61ReviewObservationState extends State<F61ReviewObservation> {
           children: [
             for (final q in quick)
               ChoiceChip(
-                label: Text(q),
+                label: Text(context.tr(q)),
                 selected: _reason.text == q,
                 showCheckmark: false,
                 selectedColor: color.withValues(alpha: 0.15),
@@ -637,22 +728,23 @@ class _F61ReviewObservationState extends State<F61ReviewObservation> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('Damage you can see', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
+              Text(context.tr('Damage you can see'), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
               if (s == null)
                 const Padding(padding: EdgeInsets.all(AppSpacing.md), child: LinearProgressIndicator())
               else if (s.availableIndicators.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.only(top: 4),
-                  child: Text('None listed for this pest.', style: TextStyle(color: AppColors.textMuted)),
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(context.tr('None listed for this pest.'), style: const TextStyle(color: AppColors.textMuted)),
                 )
               else
+                // Indicators stay English in what is sent; shown translated.
                 for (final i in s.availableIndicators)
                   CheckboxListTile(
                     contentPadding: EdgeInsets.zero,
                     controlAffinity: ListTileControlAffinity.leading,
                     dense: true,
                     value: _indicators.contains(i),
-                    title: Text(i, style: const TextStyle(fontSize: 14.5)),
+                    title: Text(context.tr(i), style: const TextStyle(fontSize: 14.5)),
                     onChanged: (v) {
                       setState(() => v == true ? _indicators.add(i) : _indicators.remove(i));
                       _refreshSuggestion();
@@ -670,12 +762,12 @@ class _F61ReviewObservationState extends State<F61ReviewObservation> {
             Row(
               children: [
                 Expanded(
-                  child: Text(r.isDisease ? 'How bad is it in the field?' : 'Infestation level',
+                  child: Text(context.tr(r.isDisease ? 'How bad is it in the field?' : 'Infestation level'),
                       style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
                 ),
                 if (_level != null && s != null)
                   AppChip(
-                    label: _overridden ? 'Overridden' : 'Suggested level',
+                    label: context.tr(_overridden ? 'Overridden' : 'Suggested level'),
                     color: _overridden ? AppColors.orange : AppColors.primary,
                     icon: _overridden ? Icons.edit_rounded : Icons.check_rounded,
                   ),
@@ -683,9 +775,9 @@ class _F61ReviewObservationState extends State<F61ReviewObservation> {
             ),
             const SizedBox(height: 4),
             Text(
-              s == null
+              context.tr(s == null
                   ? 'Pick the level you see in the field.'
-                  : 'Keep the suggested level to confirm it, or pick another to override it.',
+                  : 'Keep the suggested level to confirm it, or pick another to override it.'),
               style: const TextStyle(color: AppColors.textSecondary, fontSize: 13),
             ),
             const SizedBox(height: AppSpacing.md),
@@ -712,7 +804,8 @@ class _F61ReviewObservationState extends State<F61ReviewObservation> {
               for (final reason in s.reasons)
                 Padding(
                   padding: const EdgeInsets.only(top: 2),
-                  child: Text('• $reason', style: const TextStyle(fontSize: 12.5, height: 1.4, color: AppColors.textSecondary)),
+                  child: Text('• ${_reasonLabel(reason)}',
+                      style: const TextStyle(fontSize: 12.5, height: 1.4, color: AppColors.textSecondary)),
                 ),
             ],
           ],
@@ -725,7 +818,7 @@ class _F61ReviewObservationState extends State<F61ReviewObservation> {
           maxLines: 2,
           maxLength: 500,
           textCapitalization: TextCapitalization.sentences,
-          decoration: const InputDecoration(labelText: 'Diagnosis (optional)'),
+          decoration: InputDecoration(labelText: context.tr('Diagnosis (optional)')),
           onChanged: (_) => setState(() {}),
         ),
       TextField(
@@ -733,16 +826,16 @@ class _F61ReviewObservationState extends State<F61ReviewObservation> {
         maxLines: 4,
         maxLength: 2000,
         textCapitalization: TextCapitalization.sentences,
-        decoration: const InputDecoration(labelText: 'Guidance for the farmer (optional)'),
+        decoration: InputDecoration(labelText: context.tr('Guidance for the farmer (optional)')),
         onChanged: (_) => setState(() {}),
       ),
       if (_validateBlocker case final String why)
         Padding(
           padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-          child: Text(why, style: const TextStyle(color: AppColors.textMuted, fontSize: 13)),
+          child: Text(context.tr(why), style: const TextStyle(color: AppColors.textMuted, fontSize: 13)),
         ),
       AppPrimaryButton(
-        label: 'Validate',
+        label: context.tr('Validate'),
         icon: Icons.verified_rounded,
         onPressed: _validateBlocker == null ? _submit : null,
       ),
@@ -799,7 +892,7 @@ class _LevelTile extends StatelessWidget {
               Text(levelLabel(level),
                   style: TextStyle(color: selected ? AppColors.surface : color, fontWeight: FontWeight.w800)),
               Text(
-                suggested ? 'Suggested' : ' ',
+                suggested ? context.tr('Suggested') : ' ',
                 style: TextStyle(
                   color: selected ? AppColors.surface.withValues(alpha: 0.85) : AppColors.textMuted,
                   fontSize: 11,

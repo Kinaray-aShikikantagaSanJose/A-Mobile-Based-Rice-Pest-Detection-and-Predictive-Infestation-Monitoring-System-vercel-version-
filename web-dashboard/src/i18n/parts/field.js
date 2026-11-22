@@ -1,0 +1,388 @@
+// Translations for the dashboard (field). Key = the English text used in the code.
+// Each entry: { fil: 'Filipino', krj: 'Kinaray-a (Antique)' }. Keep {placeholders} unchanged.
+export default {
+  // ---------------------------------------------------------------- shared labels
+  Pest: { fil: 'Peste', krj: 'Peste' },
+  Disease: { fil: 'Sakit', krj: 'Balatian' },
+  pest: { fil: 'peste', krj: 'peste' },
+  Pests: { fil: 'Mga peste', krj: 'Mga peste' },
+  Escalated: { fil: 'Ipinasa sa agriculturist', krj: 'Ginpasa sa agriculturist' },
+  Waiting: { fil: 'Naghihintay', krj: 'Nagahulat' },
+  Refresh: { fil: 'I-refresh', krj: 'I-refresh' },
+  Dismiss: { fil: 'Isara', krj: 'Sirhan' },
+  'Loading…': { fil: 'Naglo-load…', krj: 'Nagaload…' },
+  'Not countable': { fil: 'Hindi mabilang', krj: 'Indi maisip' },
+  'Outside the supported set': { fil: 'Ibang peste', krj: 'Iba nga peste' },
+  Barangay: { fil: 'Barangay', krj: 'Barangay' },
+  Municipality: { fil: 'Munisipyo', krj: 'Banwa' },
+  All: { fil: 'Lahat', krj: 'Tanan' },
+  Records: { fil: 'Mga rekord', krj: 'Mga rekord' },
+  Low: { fil: 'Mababa', krj: 'Manubo' },
+  High: { fil: 'Mataas', krj: 'Mataas' },
+  // Crop stages (values from the API / CROP_STAGES)
+  Vegetative: { fil: 'Pagtubo', krj: 'Pagtubo' },
+  Reproductive: { fil: 'Pamumulaklak', krj: 'Pagpamulak' },
+  Ripening: { fil: 'Paghinog', krj: 'Paghinog' },
+  // Land types (LAND_TYPES)
+  Upland: { fil: 'Mataas na lupa', krj: 'Mataas nga duta' },
+  'Rainfed lowland': { fil: 'Mababang lupa, sahod-ulan', krj: 'Manubo nga duta, sahod-ulan' },
+  'Irrigated lowland': { fil: 'Mababang lupa, may patubig', krj: 'Manubo nga duta, may irigasyon' },
+
+  // ---------------------------------------------------------------- validation queue
+  'Model result unavailable': { fil: 'Walang resulta ng AI', krj: 'Wara it resulta it AI' },
+  'Model result: no supported pest found': {
+    fil: 'Resulta ng AI: walang nakitang kilalang peste',
+    krj: 'Resulta it AI: wara it nakita nga kilala nga peste',
+  },
+  '{n} counted': { fil: '{n} ang nabilang', krj: '{n} ang naisip' },
+  'Retake of #{id}': { fil: 'Kuha ulit ng #{id}', krj: 'Kuha liwan it #{id}' },
+  'No description': { fil: 'Walang detalye', krj: 'Wara it detalye' },
+  'No barangay': { fil: 'Walang barangay', krj: 'Wara it barangay' },
+  'stage not given': { fil: 'walang yugto', krj: 'wara it edad' },
+  trap: { fil: 'bitag', krj: 'trap' },
+  'submitted {date}': { fil: 'ipinadala {date}', krj: 'ginpadara {date}' },
+  'Escalated by {name}:': { fil: 'Ipinasa ni {name}:', krj: 'Ginpasa ni {name}:' },
+  'No reason given.': { fil: 'Walang ibinigay na dahilan.', krj: 'Wara it rason nga ginhatag.' },
+  'No technician covers this area.': {
+    fil: 'Walang technician na nakatalaga sa lugar na ito.',
+    krj: 'Wara it technician nga nakatoka sa lugar nga kadya.',
+  },
+  'Review it here, or assign a technician to {area} in User management.': {
+    fil: 'Suriin ito dito, o magtalaga ng technician sa {area} sa Pamamahala ng user.',
+    krj: 'Usisaon diya, ukon magtoka it technician sa {area} sa Pagdumala it user.',
+  },
+  'the area': { fil: 'lugar na ito', krj: 'lugar nga kadya' },
+  'a technician': { fil: 'isang technician', krj: 'isara ka technician' },
+  'Review →': { fil: 'Suriin →', krj: 'Usisaon →' },
+  'For your review': { fil: 'Para sa iyong pagsusuri', krj: 'Para sa imo nga pag-usisa' },
+  'Validation queue': { fil: 'Pila para sa validation', krj: 'Pila para sa validation' },
+  'Cases technicians escalated, and observations from places no technician covers, oldest first. Check the result, then return it, or validate it with the level. For escalated cases, record the diagnosis and the guidance for the farmer.':
+    {
+      fil: 'Mga kasong ipinasa ng mga technician, at mga obserbasyon mula sa mga lugar na walang technician, mula sa pinakaluma. Tingnan ang resulta, saka ibalik ito, o i-validate kasama ang antas. Para sa mga ipinasang kaso, itala ang diagnosis at ang payo para sa magsasaka.',
+      krj: 'Mga kaso nga ginpasa it mga technician, kag mga obserbasyon halin sa mga lugar nga wara it technician, halin sa pinakadaan. Turuka ang resulta, dayon ibalik, ukon i-validate upod ang lebel. Para sa mga ginpasa nga kaso, isulat ang diagnosis kag ang tambag para sa mangunguma.',
+    },
+  'Observations from farmers in your coverage area, oldest first. Check the result (confirm or correct the model result), then decide: return it for a new photo, validate it with the level, or escalate it.':
+    {
+      fil: 'Mga obserbasyon mula sa mga magsasaka sa iyong sakop na lugar, mula sa pinakaluma. Tingnan ang resulta (kumpirmahin o itama ang resulta ng AI), saka magpasya: ibalik para sa bagong litrato, i-validate kasama ang antas, o ipasa sa agriculturist.',
+      krj: 'Mga obserbasyon halin sa mga mangunguma sa imo nga sakop nga lugar, halin sa pinakadaan. Turuka ang resulta (kumpirmaha ukon tadlunga ang resulta it AI), dayon magdesisyon: ibalik para sa bag-o nga litrato, i-validate upod ang lebel, ukon ipasa sa agriculturist.',
+    },
+  'Waiting for an agriculturist': { fil: 'Naghihintay sa agriculturist', krj: 'Nagahulat sa agriculturist' },
+  'Waiting for validation': { fil: 'Naghihintay ng validation', krj: 'Nagahulat it validation' },
+  'Oldest submission first': { fil: 'Pinakalumang padala muna', krj: 'Pinakadaan nga padara anay' },
+  'Oldest first': { fil: 'Pinakaluma muna', krj: 'Pinakadaan anay' },
+  'Nothing waiting for you': { fil: 'Walang naghihintay sa iyo', krj: 'Wara it nagahulat sa imo' },
+  'Nothing to validate': { fil: 'Walang ive-validate', krj: 'Wara it i-validate' },
+  'No escalated pest cases, and none from places without a technician.': {
+    fil: 'Walang ipinasang kaso ng peste, at wala ring galing sa mga lugar na walang technician.',
+    krj: 'Wara it ginpasa nga kaso it peste, kag wara man halin sa mga lugar nga wara it technician.',
+  },
+  'No escalated disease cases, and none from places without a technician.': {
+    fil: 'Walang ipinasang kaso ng sakit, at wala ring galing sa mga lugar na walang technician.',
+    krj: 'Wara it ginpasa nga kaso it balatian, kag wara man halin sa mga lugar nga wara it technician.',
+  },
+  'Your account has no coverage area yet, so no observations reach your queue.': {
+    fil: 'Wala pang sakop na lugar ang iyong account, kaya walang obserbasyong napupunta sa iyong pila.',
+    krj: 'Wara pa it sakop nga lugar ang imo account, gani wara it obserbasyon nga nakaabot sa imo pila.',
+  },
+  'No pest observations from your area are waiting.': {
+    fil: 'Walang naghihintay na obserbasyon ng peste mula sa iyong lugar.',
+    krj: 'Wara it nagahulat nga obserbasyon it peste halin sa imo lugar.',
+  },
+  'No disease observations from your area are waiting.': {
+    fil: 'Walang naghihintay na obserbasyon ng sakit mula sa iyong lugar.',
+    krj: 'Wara it nagahulat nga obserbasyon it balatian halin sa imo lugar.',
+  },
+  'Escalated observations leave this queue and go to an agriculturist. You can follow them in your validation history.': {
+    fil: 'Ang mga ipinasang obserbasyon ay aalis sa pilang ito at mapupunta sa agriculturist. Masusundan mo ang mga ito sa iyong validation history.',
+    krj: 'Ang mga ginpasa nga obserbasyon magaguwa sa pila nga kadya kag makadto sa agriculturist. Masundan mo sanda sa imo validation history.',
+  },
+
+  // ---------------------------------------------------------------- review form
+  'The photo is too blurry. Please take a new, closer photo.': {
+    fil: 'Masyadong malabo ang litrato. Kumuha ng bago at mas malapit na litrato.',
+    krj: 'Malabo gid ang litrato. Magkuha it bag-o kag mas malapit nga litrato.',
+  },
+  "The pest isn't visible in the photo. Please photograph the insects up close.": {
+    fil: 'Hindi makita ang peste sa litrato. Kunan nang malapitan ang mga insekto.',
+    krj: 'Indi makita ang peste sa litrato. Kuhaan it malapit ang mga insekto.',
+  },
+  'The photo is too dark. Please retake it in daylight.': {
+    fil: 'Masyadong madilim ang litrato. Kunan ulit sa liwanag ng araw.',
+    krj: 'Madulom gid ang litrato. Kuhaan liwan sa kasanag it adlaw.',
+  },
+  "The photo doesn't show a rice crop.": { fil: 'Walang palay sa litrato.', krj: 'Wara it humay sa litrato.' },
+  'One thing is missing': { fil: 'May isang kulang', krj: 'May isara nga kulang' },
+  '{n} things are missing': { fil: '{n} bagay ang kulang', krj: '{n} ka butang ang kulang' },
+  Return: { fil: 'Ibalik', krj: 'Ibalik' },
+  'Photo unclear: the farmer retakes it': {
+    fil: 'Malabo ang litrato: kukunan ulit ng magsasaka',
+    krj: 'Malabo ang litrato: kuhaan liwan it mangunguma',
+  },
+  Validate: { fil: 'I-validate', krj: 'I-validate' },
+  'Confirm the infestation level': { fil: 'Kumpirmahin ang antas ng peste', krj: 'Kumpirmaha ang lebel it peste' },
+  Escalate: { fil: 'Ipasa sa agriculturist', krj: 'Ipasa sa agriculturist' },
+  'Complex case: an agriculturist diagnoses it': {
+    fil: 'Mahirap na kaso: susuriin ng agriculturist',
+    krj: 'Mabudlay nga kaso: usisaon it agriculturist',
+  },
+  'Write what the farmer should fix, or pick one of the reasons below.': {
+    fil: 'Isulat kung ano ang dapat ayusin ng magsasaka, o pumili ng isa sa mga dahilan sa ibaba.',
+    krj: 'Isulat kon ano ang dapat ayuson it mangunguma, ukon magpili it isara sa mga rason sa idalom.',
+  },
+  'Write why this case needs an agriculturist.': {
+    fil: 'Isulat kung bakit kailangan ng agriculturist ang kasong ito.',
+    krj: 'Isulat kon ham-at kinahanglan it agriculturist ang kaso nga kadya.',
+  },
+  'What should the farmer fix? *': { fil: 'Ano ang dapat ayusin ng magsasaka? *', krj: 'Ano ang dapat ayuson it mangunguma? *' },
+  'Why it needs an agriculturist *': { fil: 'Bakit kailangan ng agriculturist *', krj: 'Ham-at kinahanglan it agriculturist *' },
+  'The farmer sees this in the app and retakes the photo. The new photo goes through the review again.': {
+    fil: 'Makikita ito ng magsasaka sa app at kukunan niya ulit ang litrato. Susuriin ulit ang bagong litrato.',
+    krj: 'Makita kadya it mangunguma sa app kag kuhaan na liwan ang litrato. Usisaon liwan ang bag-o nga litrato.',
+  },
+  'Only technicians and agriculturists see this. The farmer is told an agriculturist will review it.': {
+    fil: 'Mga technician at agriculturist lang ang makakakita nito. Sasabihan ang magsasaka na susuriin ito ng agriculturist.',
+    krj: 'Mga technician kag agriculturist lang ang makakita kadya. Sugidan ang mangunguma nga usisaon kadya it agriculturist.',
+  },
+  'Return to the farmer': { fil: 'Ibalik sa magsasaka', krj: 'Ibalik sa mangunguma' },
+  'Escalate to an agriculturist': { fil: 'Ipasa sa agriculturist', krj: 'Ipasa sa agriculturist' },
+  Count: { fil: 'Bilang', krj: 'Isip' },
+  'Number seen': { fil: 'Bilang na nakita', krj: 'Isip nga nakita' },
+  'Not countable (insects too close together or unclear)': {
+    fil: 'Hindi mabilang (dikit-dikit o malabo ang mga insekto)',
+    krj: 'Indi maisip (dikit-dikit ukon malabo ang mga insekto)',
+  },
+  'Enter a whole number, or tick "Not countable".': {
+    fil: 'Maglagay ng buong numero, o i-tsek ang "Hindi mabilang".',
+    krj: 'Magbutang it buo nga numero, ukon i-tsek ang "Indi maisip".',
+  },
+  'Low infestation': { fil: 'Mababang antas ng peste', krj: 'Manubo nga lebel it peste' },
+  'Moderate infestation': { fil: 'Katamtamang antas ng peste', krj: 'Tunga-tunga nga lebel it peste' },
+  'Severe infestation': { fil: 'Mataas na antas ng peste', krj: 'Mataas nga lebel it peste' },
+  Suggested: { fil: 'Mungkahi', krj: 'Suhestiyon' },
+  optional: { fil: 'opsyonal', krj: 'opsyonal' },
+  Diagnosis: { fil: 'Diagnosis', krj: 'Diagnosis' },
+  'e.g. Brown planthopper build-up at the base of the tillers': {
+    fil: 'hal. Dumaraming Brown planthopper sa puno ng mga suwi',
+    krj: 'hal. Nagadamo nga Brown planthopper sa puno it mga suli',
+  },
+  'e.g. Bacterial leaf blight': { fil: 'hal. Bacterial leaf blight', krj: 'hal. Bacterial leaf blight' },
+  'Note to the farmer': { fil: 'Mensahe sa magsasaka', krj: 'Mensahe sa mangunguma' },
+  'Guidance for the farmer': { fil: 'Payo para sa magsasaka', krj: 'Tambag para sa mangunguma' },
+  "Shown on the farmer's record. Describe approaches; the app tells farmers to consult their technician before using any pesticide.": {
+    fil: 'Makikita sa rekord ng magsasaka. Ilarawan ang mga paraan; pinapaalalahanan ng app ang mga magsasaka na kumonsulta muna sa technician bago gumamit ng anumang pestisidyo.',
+    krj: 'Makita sa rekord it mangunguma. Isaysay ang mga paagi; ginapahanumdum it app ang mga mangunguma nga magpakonsulta anay sa technician antes maggamit it bisan ano nga pestisidyo.',
+  },
+  'Step 1: choose the pest.': { fil: 'Hakbang 1: piliin ang peste.', krj: 'Hakbang 1: pilia ang peste.' },
+  'Step 1: enter the count, or tick "Not countable".': {
+    fil: 'Hakbang 1: ilagay ang bilang, o i-tsek ang "Hindi mabilang".',
+    krj: 'Hakbang 1: ibutang ang isip, ukon i-tsek ang "Indi maisip".',
+  },
+  'Pick the infestation level: LOW, MEDIUM or HIGH.': {
+    fil: 'Piliin ang antas ng peste: LOW, MEDIUM o HIGH.',
+    krj: 'Pilia ang lebel it peste: LOW, MEDIUM ukon HIGH.',
+  },
+  'Write the diagnosis.': { fil: 'Isulat ang diagnosis.', krj: 'Isulat ang diagnosis.' },
+  'Write the guidance for the farmer.': { fil: 'Isulat ang payo para sa magsasaka.', krj: 'Isulat ang tambag para sa mangunguma.' },
+  'Pest not chosen': { fil: 'Wala pang napiling peste', krj: 'Wara pa it napili nga peste' },
+  'count missing': { fil: 'walang bilang', krj: 'wara it isip' },
+  'crop stage {stage}': { fil: 'yugto ng palay: {stage}', krj: 'edad it humay: {stage}' },
+  'not given': { fil: 'hindi nakasaad', krj: 'wara ginbutang' },
+  'Tick the damage you can see; the suggestion updates as you go.': {
+    fil: 'I-tsek ang pinsalang nakikita mo; magbabago ang mungkahi habang pumipili ka.',
+    krj: 'I-tsek ang danyos nga makita mo; magabag-o ang suhestiyon samtang nagapili ka.',
+  },
+  'Visible damage indicators': { fil: 'Mga nakikitang palatandaan ng pinsala', krj: 'Mga makita nga tanda it danyos' },
+  'Finish step 1 first.': { fil: 'Tapusin muna ang hakbang 1.', krj: 'Tapusa anay ang hakbang 1.' },
+  'Indicators unavailable.': { fil: 'Hindi makuha ang mga palatandaan.', krj: 'Indi makuha ang mga tanda.' },
+  'None listed for this pest.': { fil: 'Walang nakalista para sa pesteng ito.', krj: 'Wara it nakalista para sa peste nga kadya.' },
+  'Suggested level:': { fil: 'Mungkahing antas:', krj: 'Suhestiyon nga lebel:' },
+  "Couldn't load the suggestion ({error}). You can still set the level yourself.": {
+    fil: 'Hindi ma-load ang mungkahi ({error}). Puwede mo pa ring itakda ang antas.',
+    krj: 'Indi ma-load ang suhestiyon ({error}). Pwede mo gihapon ibutang ang lebel.',
+  },
+  'Your level *': { fil: 'Iyong antas *', krj: 'Imo nga lebel *' },
+  "You're overriding the suggestion ({level}). Your level is the one recorded and shown everywhere.": {
+    fil: 'Binabago mo ang mungkahi ({level}). Ang iyong antas ang itatala at ipapakita kahit saan.',
+    krj: 'Ginailisan mo ang suhestiyon ({level}). Ang imo nga lebel ang matala kag ipakita bisan diin.',
+  },
+  'Use the suggestion': { fil: 'Gamitin ang mungkahi', krj: 'Gamiton ang suhestiyon' },
+  'Updating the suggestion…': { fil: 'Ina-update ang mungkahi…', krj: 'Gina-update ang suhestiyon…' },
+  'Validate as {level}': { fil: 'I-validate bilang {level}', krj: 'I-validate bilang {level}' },
+  'Pick how bad it is in the field: LOW, MEDIUM or HIGH.': {
+    fil: 'Piliin kung gaano kalala sa bukid: LOW, MEDIUM o HIGH.',
+    krj: 'Pilia kon daw ano kagrabe sa uma: LOW, MEDIUM ukon HIGH.',
+  },
+  'How bad is it in the field? *': { fil: 'Gaano kalala sa bukid? *', krj: 'Daw ano kagrabe sa uma? *' },
+  'Model result:': { fil: 'Resulta ng AI:', krj: 'Resulta it AI:' },
+  'No supported pest was named. Choose the pest and enter the count.': {
+    fil: 'Walang natukoy na kilalang peste. Piliin ang peste at ilagay ang bilang.',
+    krj: 'Wara it natukoy nga kilala nga peste. Pilia ang peste kag ibutang ang isip.',
+  },
+  'Pest *': { fil: 'Peste *', krj: 'Peste *' },
+  'Choose the pest…': { fil: 'Piliin ang peste…', krj: 'Pilia ang peste…' },
+  'Choose the pest.': { fil: 'Piliin ang peste.', krj: 'Pilia ang peste.' },
+  'Confirming the model result': { fil: 'Kinukumpirma ang resulta ng AI', krj: 'Ginakumpirma ang resulta it AI' },
+  'Corrected by you': { fil: 'Itinama mo', krj: 'Gintadlong mo' },
+  'Use the model result': { fil: 'Gamitin ang resulta ng AI', krj: 'Gamiton ang resulta it AI' },
+  "Confirm the model result's pest and count, or correct them.": {
+    fil: 'Kumpirmahin ang peste at bilang sa resulta ng AI, o itama ang mga ito.',
+    krj: 'Kumpirmaha ang peste kag isip sa resulta it AI, ukon tadlunga.',
+  },
+  'You skipped this step: choose the pest first.': {
+    fil: 'Nilaktawan mo ang hakbang na ito: piliin muna ang peste.',
+    krj: 'Ginlaktawan mo ang hakbang nga kadya: pilia anay ang peste.',
+  },
+  'Enter the count, or tick "Not countable".': {
+    fil: 'Ilagay ang bilang, o i-tsek ang "Hindi mabilang".',
+    krj: 'Ibutang ang isip, ukon i-tsek ang "Indi maisip".',
+  },
+  'Check the result': { fil: 'Tingnan ang resulta', krj: 'Turuka ang resulta' },
+  Decision: { fil: 'Desisyon', krj: 'Desisyon' },
+  'There is no model result for disease reports. Look at the photo and the symptoms the farmer described.': {
+    fil: 'Walang resulta ng AI para sa ulat ng sakit. Tingnan ang litrato at ang mga sintomas na inilarawan ng magsasaka.',
+    krj: 'Wara it resulta it AI para sa report it balatian. Turuka ang litrato kag ang mga sintomas nga ginsugid it mangunguma.',
+  },
+  'Check the report': { fil: 'Tingnan ang ulat', krj: 'Turuka ang report' },
+  'Observation #{id} validated: {pest}, {level} infestation.': {
+    fil: 'Na-validate ang obserbasyon #{id}: {pest}, {level} na antas.',
+    krj: 'Na-validate ang obserbasyon #{id}: {pest}, {level} nga lebel.',
+  },
+  'Disease report #{id} validated: {level} level.': {
+    fil: 'Na-validate ang ulat ng sakit #{id}: {level} na antas.',
+    krj: 'Na-validate ang report it balatian #{id}: {level} nga lebel.',
+  },
+  'Observation #{id} was returned. The farmer will retake the photo.': {
+    fil: 'Ibinalik ang obserbasyon #{id}. Kukunan ulit ng magsasaka ang litrato.',
+    krj: 'Ginbalik ang obserbasyon #{id}. Kuhaan liwan it mangunguma ang litrato.',
+  },
+  'Observation #{id} was escalated to an agriculturist.': {
+    fil: 'Ipinasa sa agriculturist ang obserbasyon #{id}.',
+    krj: 'Ginpasa sa agriculturist ang obserbasyon #{id}.',
+  },
+
+  // ---------------------------------------------------------------- hotspot map
+  'Active hotspots': { fil: 'Mga aktibong hotspot', krj: 'Mga aktibo nga hotspot' },
+  'Barangays with validated records, last {days} days': {
+    fil: 'Mga barangay na may na-validate na rekord, nakaraang {days} araw',
+    krj: 'Mga barangay nga may na-validate nga rekord, katapusan nga {days} ka adlaw',
+  },
+  'Directional spread': { fil: 'Direksyon ng pagkalat', krj: 'Direksyon it pagkalat' },
+  'needs at least {n} validated records with a location in each': {
+    fil: 'kailangan ng hindi bababa sa {n} na-validate na rekord na may lokasyon sa bawat isa',
+    krj: 'kinahanglan it indi magnubo sa {n} ka na-validate nga rekord nga may lokasyon sa kada isara',
+  },
+  'Where validated cases cluster in two consecutive windows': {
+    fil: 'Kung saan nagkukumpol ang mga na-validate na kaso sa dalawang magkasunod na panahon',
+    krj: 'Kon diin nagatipon ang mga na-validate nga kaso sa duha ka sunod-sunod nga panahon',
+  },
+  'Week to week': { fil: 'Linggo-linggo', krj: 'Semana-semana' },
+  '2 weeks': { fil: '2 linggo', krj: '2 ka semana' },
+  '30 days': { fil: '30 araw', krj: '30 ka adlaw' },
+  'Based on reported cases only. It shows observed movement, not a forecast.': {
+    fil: 'Batay lang sa mga naiulat na kaso. Ipinapakita nito ang nakitang paggalaw, hindi hula.',
+    krj: 'Base lang sa mga ginreport nga kaso. Ginapakita kadya ang nakita nga paghulag, bukon tagna.',
+  },
+  'Directional spread always uses real validated records, never the sample data.': {
+    fil: 'Laging totoong na-validate na rekord ang ginagamit sa direksyon ng pagkalat, hindi ang sample data.',
+    krj: 'Pirme nga matuod nga na-validate nga rekord ang ginagamit sa direksyon it pagkalat, bukon ang sample data.',
+  },
+  'No validated records with a location in {a} or {b} match these filters.': {
+    fil: 'Walang na-validate na rekord na may lokasyon sa {a} o {b} na tugma sa mga filter na ito.',
+    krj: 'Wara it na-validate nga rekord nga may lokasyon sa {a} ukon {b} nga tugma sa mga filter nga kadya.',
+  },
+  'Hotspot map': { fil: 'Mapa ng hotspot', krj: 'Mapa it hotspot' },
+  'SAMPLE DATA · {n} generated points, not real records': {
+    fil: 'SAMPLE DATA · {n} gawa-gawang punto, hindi totoong rekord',
+    krj: 'SAMPLE DATA · {n} ginhimo nga punto, bukon matuod nga rekord',
+  },
+  'Validated observations only': { fil: 'Na-validate na obserbasyon lang', krj: 'Na-validate nga obserbasyon lang' },
+  '{n} with GPS': { fil: '{n} may GPS', krj: '{n} may GPS' },
+  '{n} with GPS match the filters': { fil: '{n} may GPS na tugma sa filter', krj: '{n} may GPS nga tugma sa filter' },
+  '{n} barangay hotspot': { fil: '{n} barangay hotspot', krj: '{n} ka barangay hotspot' },
+  '{n} barangay hotspots': { fil: '{n} barangay hotspot', krj: '{n} ka barangay hotspot' },
+  'Clear filters': { fil: 'I-clear ang filter', krj: 'I-clear ang filter' },
+  'Pest type': { fil: 'Uri ng peste', krj: 'Klase it peste' },
+  From: { fil: 'Mula', krj: 'Halin' },
+  To: { fil: 'Hanggang', krj: 'Hasta' },
+  'Crop stage': { fil: 'Yugto ng palay', krj: 'Edad it humay' },
+  'Infestation level': { fil: 'Antas ng peste', krj: 'Lebel it peste' },
+  'Land type': { fil: 'Uri ng lupa', krj: 'Klase it duta' },
+  'All stages': { fil: 'Lahat ng yugto', krj: 'Tanan nga edad' },
+  'All levels': { fil: 'Lahat ng antas', krj: 'Tanan nga lebel' },
+  'All land types': { fil: 'Lahat ng uri ng lupa', krj: 'Tanan nga klase it duta' },
+  Markers: { fil: 'Mga marker', krj: 'Mga marker' },
+  Heatmap: { fil: 'Heatmap', krj: 'Heatmap' },
+  'Weight: infestation level': { fil: 'Batay sa: antas ng peste', krj: 'Base sa: lebel it peste' },
+  'Weight: number of cases': { fil: 'Batay sa: bilang ng kaso', krj: 'Base sa: isip it kaso' },
+  'Preview with sample data (5,000 points)': {
+    fil: 'Silipin gamit ang sample data (5,000 punto)',
+    krj: 'Tan-awa gamit ang sample data (5,000 ka punto)',
+  },
+  'Sample data.': { fil: 'Sample data.', krj: 'Sample data.' },
+  'These points are generated for trying the map with many records. They are not real observations; untick the box to see validated records.': {
+    fil: 'Ginawa ang mga puntong ito para subukan ang mapa na may maraming rekord. Hindi ito totoong obserbasyon; alisin ang tsek para makita ang mga na-validate na rekord.',
+    krj: 'Ginhimo ang mga punto nga kadya para tilawan ang mapa nga may madamo nga rekord. Bukon kadya matuod nga obserbasyon; kuhaa ang tsek para makita ang mga na-validate nga rekord.',
+  },
+  'Loading map…': { fil: 'Naglo-load ang mapa…', krj: 'Nagaload ang mapa…' },
+  'Barangay hotspots': { fil: 'Mga hotspot na barangay', krj: 'Mga hotspot nga barangay' },
+  'Highest confirmed level first. Click a row to zoom the map to it.': {
+    fil: 'Pinakamataas na kumpirmadong antas muna. I-click ang isang row para i-zoom ang mapa doon.',
+    krj: 'Pinakamataas nga kumpirmado nga lebel anay. I-click ang isara ka row para i-zoom ang mapa rugto.',
+  },
+  'No hotspots': { fil: 'Walang hotspot', krj: 'Wara it hotspot' },
+  'No validated pest observations with a location match these filters.': {
+    fil: 'Walang na-validate na obserbasyon ng peste na may lokasyon na tugma sa mga filter na ito.',
+    krj: 'Wara it na-validate nga obserbasyon it peste nga may lokasyon nga tugma sa mga filter nga kadya.',
+  },
+  'Highest level': { fil: 'Pinakamataas na antas', krj: 'Pinakamataas nga lebel' },
+  Latest: { fil: 'Pinakabago', krj: 'Pinakabag-o' },
+  'The whole province. Only validated observations appear; hotspots are barangays coloured by the highest infestation level a reviewer confirmed.':
+    {
+      fil: 'Ang buong probinsya. Na-validate na obserbasyon lang ang lumalabas; ang mga hotspot ay mga barangay na may kulay ayon sa pinakamataas na antas ng peste na kinumpirma ng nagsuri.',
+      krj: 'Ang bilog nga probinsya. Na-validate nga obserbasyon lang ang nagaguwa; ang mga hotspot amo ang mga barangay nga may kolor suno sa pinakamataas nga lebel it peste nga ginkumpirma it nag-usisa.',
+    },
+  'Your coverage area. Only validated observations appear; hotspots are barangays coloured by the highest infestation level a reviewer confirmed.':
+    {
+      fil: 'Ang iyong sakop na lugar. Na-validate na obserbasyon lang ang lumalabas; ang mga hotspot ay mga barangay na may kulay ayon sa pinakamataas na antas ng peste na kinumpirma ng nagsuri.',
+      krj: 'Ang imo nga sakop nga lugar. Na-validate nga obserbasyon lang ang nagaguwa; ang mga hotspot amo ang mga barangay nga may kolor suno sa pinakamataas nga lebel it peste nga ginkumpirma it nag-usisa.',
+    },
+  'For validation': { fil: 'Para sa validation', krj: 'Para sa validation' },
+  'In your queue': { fil: 'Nasa iyong pila', krj: 'Yara sa imo pila' },
+  'Validated this month': { fil: 'Na-validate ngayong buwan', krj: 'Na-validate kadya nga bulan' },
+  // Map tooltips and legend
+  'Highest level:': { fil: 'Pinakamataas na antas:', krj: 'Pinakamataas nga lebel:' },
+  '{n} record': { fil: '{n} rekord', krj: '{n} ka rekord' },
+  '{n} records': { fil: '{n} rekord', krj: '{n} ka rekord' },
+  'Latest: {date}': { fil: 'Pinakabago: {date}', krj: 'Pinakabag-o: {date}' },
+  Sample: { fil: 'Sample', krj: 'Sample' },
+  'no level': { fil: 'walang antas', krj: 'wara it lebel' },
+  'Intensity reflects reported cases, not total pest population.': {
+    fil: 'Ang tindi ng kulay ay batay sa mga naiulat na kaso, hindi sa kabuuang dami ng peste.',
+    krj: 'Ang kakusog it kolor base sa mga ginreport nga kaso, bukon sa kabilugan nga kadamuon it peste.',
+  },
+  'Number of validated cases': { fil: 'Bilang ng na-validate na kaso', krj: 'Isip it na-validate nga kaso' },
+  'Weighted by infestation level': { fil: 'Batay sa antas ng peste', krj: 'Base sa lebel it peste' },
+  'Disease report (no level)': { fil: 'Ulat ng sakit (walang antas)', krj: 'Report it balatian (wara it lebel)' },
+  'Barangay hotspot, coloured by its highest confirmed level': {
+    fil: 'Hotspot na barangay, may kulay ayon sa pinakamataas na kumpirmadong antas',
+    krj: 'Hotspot nga barangay, may kolor suno sa pinakamataas nga kumpirmado nga lebel',
+  },
+  'Direction reported cases moved': {
+    fil: 'Direksyon ng paggalaw ng mga naiulat na kaso',
+    krj: 'Direksyon it paghulag it mga ginreport nga kaso',
+  },
+  'Click a point to open the record.': {
+    fil: 'I-click ang isang punto para buksan ang rekord.',
+    krj: 'I-click ang isara ka punto para mabuksan ang rekord.',
+  },
+  'open in OpenStreetMap': { fil: 'buksan sa OpenStreetMap', krj: 'buksi sa OpenStreetMap' },
+
+  // ---------------------------------------------------------------- photos
+  'Observation {id}': { fil: 'Obserbasyon {id}', krj: 'Obserbasyon {id}' },
+  'Photo unavailable.': { fil: 'Hindi makuha ang litrato.', krj: 'Indi makuha ang litrato.' },
+  'Photo unavailable': { fil: 'Hindi makuha ang litrato', krj: 'Indi makuha ang litrato' },
+  'Loading photo…': { fil: 'Naglo-load ang litrato…', krj: 'Nagaload ang litrato…' },
+  'Show model result boxes ({n})': { fil: 'Ipakita ang mga kahon ng AI ({n})', krj: 'Ipakita ang mga kahon it AI ({n})' },
+  'Open full size': { fil: 'Buksan nang buong laki', krj: 'Buksi nga bilog' },
+  'Scan photo': { fil: 'Litrato ng scan', krj: 'Litrato it scan' },
+};

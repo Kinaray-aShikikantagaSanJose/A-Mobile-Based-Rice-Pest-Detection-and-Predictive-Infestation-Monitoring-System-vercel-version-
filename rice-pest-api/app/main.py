@@ -12,6 +12,8 @@ from . import analytics_router
 from . import dashboard_router
 from . import discovery
 from . import guide
+from . import geo
+from . import activity
 
 
 ON_VERCEL = bool(os.getenv("VERCEL"))
@@ -66,12 +68,24 @@ app.include_router(sync_router.router)
 app.include_router(analytics_router.router)
 app.include_router(dashboard_router.router)
 app.include_router(guide.router)
+app.include_router(geo.router)
 
 
 def _is_https(request: Request) -> bool:
     # Vercel terminates TLS and forwards the original scheme in this header.
     forwarded = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
     return request.url.scheme == "https" or (ON_VERCEL and forwarded == "https")
+
+
+@app.middleware("http")
+async def activity_context(request: Request, call_next):
+    """IP address, user agent and app of this request, for the activity log
+    (app/activity.py). Never changes the response."""
+    token = activity.begin_request(request)
+    try:
+        return await call_next(request)
+    finally:
+        activity.end_request(token)
 
 
 @app.middleware("http")

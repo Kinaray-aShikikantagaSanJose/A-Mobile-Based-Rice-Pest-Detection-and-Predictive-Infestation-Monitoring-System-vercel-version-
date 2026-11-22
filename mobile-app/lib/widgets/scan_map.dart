@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart' hide Path; // hide latlong2's Path so CustomPaint uses dart:ui Path
+import '../l10n/app_language.dart';
 import '../theme.dart';
 import '../utils/formatters.dart';
 import 'motion.dart';
@@ -312,7 +313,7 @@ class ScanMapState extends State<ScanMap> {
                       borderRadius: BorderRadius.circular(AppRadius.pill),
                     ),
                     child: Text(
-                      _online == true ? 'TERRAIN' : 'OFFLINE PREVIEW',
+                      _online == true ? context.tr('TERRAIN') : context.tr('OFFLINE PREVIEW'),
                       style: const TextStyle(
                         color: AppColors.surface,
                         fontSize: 9,

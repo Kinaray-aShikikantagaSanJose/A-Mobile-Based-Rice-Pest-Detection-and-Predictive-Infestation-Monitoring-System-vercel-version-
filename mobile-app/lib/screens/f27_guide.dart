@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 
+import '../l10n/app_language.dart';
 import '../platform/local_files.dart';
 import '../services/api_client.dart';
 import '../services/local_store.dart';
@@ -88,7 +89,7 @@ class _F27GuideState extends State<F27Guide> {
       body: SafeArea(
         child: Column(
           children: [
-            const AppHeader(title: 'What to look for', subtitle: 'Pests and the damage they cause'),
+            AppHeader(title: context.tr('What to look for'), subtitle: context.tr('Pests and the damage they cause')),
             Expanded(
               child: g == null
                   ? (_error == null
@@ -99,9 +100,9 @@ class _F27GuideState extends State<F27Guide> {
                       : ListView(children: [
                           AppEmptyState(
                             icon: Icons.menu_book_outlined,
-                            title: 'Can\'t load the guide',
-                            message: _error!,
-                            actionLabel: 'Try again',
+                            title: context.tr('Can\'t load the guide'),
+                            message: context.tr(_error!),
+                            actionLabel: context.tr('Try again'),
                             onAction: _load,
                           ),
                         ]))
@@ -120,10 +121,10 @@ class _F27GuideState extends State<F27Guide> {
       padding: const EdgeInsets.fromLTRB(AppSpacing.hPad, AppSpacing.xs, AppSpacing.hPad, AppSpacing.xl),
       children: [
         if (_offline) ...[
-          const InfoBanner(
+          InfoBanner(
             icon: Icons.cloud_off_rounded,
             color: AppColors.textSecondary,
-            message: 'No signal. Showing the guide saved on this phone.',
+            message: context.tr('No signal. Showing the guide saved on this phone.'),
           ),
           const SizedBox(height: AppSpacing.md),
         ],
@@ -187,7 +188,7 @@ class _PestCard extends StatelessWidget {
                 const SizedBox(height: 4),
                 Text('${pest['stage_note'] ?? ''}', style: const TextStyle(color: AppColors.textSecondary, fontSize: 13, height: 1.4)),
                 const SizedBox(height: AppSpacing.lg),
-                const Text('Damage to look for', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
+                Text(context.tr('Damage to look for'), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
                 for (final s in symptoms) ...[
                   const SizedBox(height: AppSpacing.md),
                   Row(
@@ -264,7 +265,8 @@ class _Photo extends StatelessWidget {
                     children: [
                       const Icon(Icons.image_outlined, color: AppColors.textMuted),
                       if (height > 100)
-                        const Text('Example photo not added yet', style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+                        Text(context.tr('Example photo not added yet'),
+                            style: const TextStyle(color: AppColors.textMuted, fontSize: 12)),
                     ],
                   ),
                 ),

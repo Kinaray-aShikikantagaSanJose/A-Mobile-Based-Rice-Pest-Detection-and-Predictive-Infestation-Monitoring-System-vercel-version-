@@ -3,6 +3,7 @@ import { api } from '../api.js';
 import Avatar from '../components/Avatar.jsx';
 import Icon from '../components/icons.jsx';
 import { Badge, Button, ChipsInput, Drawer, Empty, ErrorNote, Field, Loading, Notice, Panel, PageHeader, Segmented, Select } from '../components/ui.jsx';
+import { useT } from '../i18n/index.jsx';
 import { fmtDate, fmtNum, MUNICIPALITIES, ROLE_LABELS, useAction, useAsync } from '../lib.js';
 
 const ROLE_TONE = { farmer: 'gray', technician: 'blue', agriculturist: 'purple' };
@@ -28,10 +29,12 @@ function useBarangays(users) {
 }
 
 function CoverageHint() {
+  const t = useT();
   return (
     <p className="text-xs text-muted">
-      Coverage = municipality + barangays. Leave barangays empty to cover the whole municipality. Observations reach the queue of each technician whose coverage
-      includes the farmer's barangay.
+      {t(
+        "Coverage = municipality + barangays. Leave barangays empty to cover the whole municipality. Observations reach the queue of each technician whose coverage includes the farmer's barangay.",
+      )}
     </p>
   );
 }
@@ -39,6 +42,7 @@ function CoverageHint() {
 // ---------------------------------------------------------------- approval queue
 
 function ApprovalRow({ u, barangaysOf, onDone }) {
+  const t = useT();
   // Starts at the role the person asked for when registering.
   const [role, setRole] = useState(u.role || 'farmer');
   const [municipality, setMunicipality] = useState(u.municipality || '');
@@ -50,13 +54,13 @@ function ApprovalRow({ u, barangaysOf, onDone }) {
       if (municipality && municipality !== u.municipality) body.municipality = municipality;
       if (role === 'technician') body.coverage_barangays = coverage;
       await api.updateUser(u.id, body);
-      onDone(`${u.full_name} approved as ${ROLE_LABELS[role].toLowerCase()}.`);
+      onDone(t('{name} approved as {role}.', { name: u.full_name, role: t(ROLE_LABELS[role]).toLowerCase() }));
     });
   const reject = () => {
-    if (!window.confirm(`Reject ${u.full_name}'s account? They won't be able to use the app or dashboard.`)) return;
+    if (!window.confirm(t("Reject {name}'s account? They won't be able to use the app or dashboard.", { name: u.full_name }))) return;
     action.run(async () => {
       await api.updateUser(u.id, { status: 'rejected' });
-      onDone(`${u.full_name}'s account was rejected.`);
+      onDone(t("{name}'s account was rejected.", { name: u.full_name }));
     });
   };
   return (
@@ -64,7 +68,7 @@ function ApprovalRow({ u, barangaysOf, onDone }) {
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-semibold text-ink">{u.full_name}</span>
-          <Badge tone={ROLE_TONE[u.role] || 'gray'}>Requested: {ROLE_LABELS[u.role] || u.role}</Badge>
+          <Badge tone={ROLE_TONE[u.role] || 'gray'}>{t('Requested: {role}', { role: ROLE_LABELS[u.role] ? t(ROLE_LABELS[u.role]) : u.role })}</Badge>
         </div>
         <div className="truncate text-sm text-ink2">{u.email}</div>
         <div className="mt-1 text-xs text-ink2">
@@ -73,31 +77,31 @@ function ApprovalRow({ u, barangaysOf, onDone }) {
               {u.phone}
             </a>
           ) : (
-            'No phone'
+            t('No phone')
           )}{' '}
-          · {[u.barangay, u.municipality].filter(Boolean).join(', ') || 'No area given'}
+          · {[u.barangay, u.municipality].filter(Boolean).join(', ') || t('No area given')}
         </div>
-        <div className="text-xs text-muted">Requested {fmtDate(u.created_at)}</div>
+        <div className="text-xs text-muted">{t('Requested {date}', { date: fmtDate(u.created_at) })}</div>
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Approve as">
-          <Select value={role} onChange={setRole} options={ROLE_OPTIONS} />
+        <Field label={t('Approve as')}>
+          <Select value={role} onChange={setRole} options={ROLE_OPTIONS.map(([v, l]) => [v, t(l)])} />
         </Field>
-        <Field label="Municipality">
-          <Select value={municipality} onChange={setMunicipality} placeholder={municipality ? undefined : 'Not set'} options={muniOptions(u.municipality)} />
+        <Field label={t('Municipality')}>
+          <Select value={municipality} onChange={setMunicipality} placeholder={municipality ? undefined : t('Not set')} options={muniOptions(u.municipality)} />
         </Field>
         {role === 'technician' && (
-          <Field as="div" label="Coverage barangays" className="sm:col-span-2">
-            <ChipsInput value={coverage} onChange={setCoverage} placeholder="Whole municipality" suggestions={barangaysOf(municipality)} />
+          <Field as="div" label={t('Coverage barangays')} className="sm:col-span-2">
+            <ChipsInput value={coverage} onChange={setCoverage} placeholder={t('Whole municipality')} suggestions={barangaysOf(municipality)} />
           </Field>
         )}
       </div>
       <div className="flex gap-2 lg:flex-col lg:items-stretch lg:pt-5">
         <Button onClick={approve} busy={action.busy} disabled={!municipality}>
-          Approve
+          {t('Approve')}
         </Button>
         <Button variant="danger" onClick={reject} disabled={action.busy}>
-          Reject
+          {t('Reject')}
         </Button>
       </div>
       {action.error && (
@@ -110,13 +114,14 @@ function ApprovalRow({ u, barangaysOf, onDone }) {
 }
 
 function ApprovalQueue({ users, barangaysOf, onDone }) {
+  const t = useT();
   const waiting = users.filter((u) => u.status === 'pending' && u.is_verified);
   const unverified = users.filter((u) => u.status === 'pending' && !u.is_verified).length;
   return (
     <Panel
       className={waiting.length ? 'border-orange-300 ring-1 ring-orange-200' : ''}
-      title={`Approval queue (${waiting.length})`}
-      subtitle="New accounts can't use the app or dashboard until you approve them. Each person picks a role when registering; confirm it or change it here before approving."
+      title={t('Approval queue ({n})', { n: waiting.length })}
+      subtitle={t("New accounts can't use the app or dashboard until you approve them. Each person picks a role when registering; confirm it or change it here before approving.")}
       bodyClassName=""
     >
       {waiting.length ? (
@@ -126,11 +131,13 @@ function ApprovalQueue({ users, barangaysOf, onDone }) {
           ))}
         </ul>
       ) : (
-        <Empty title="No accounts waiting for approval" />
+        <Empty title={t('No accounts waiting for approval')} />
       )}
       {unverified > 0 && (
         <div className="border-t border-line px-5 py-3 text-xs text-ink2">
-          {unverified} more account{unverified === 1 ? ' hasn’t' : 's haven’t'} verified their email yet. They appear here once they do.
+          {unverified === 1
+            ? t('{n} more account hasn’t verified their email yet. They appear here once they do.', { n: unverified })
+            : t('{n} more accounts haven’t verified their email yet. They appear here once they do.', { n: unverified })}
         </div>
       )}
     </Panel>
@@ -144,8 +151,9 @@ const PHONE_RE = /^\+?[0-9][0-9 -]{5,28}$/;
 const MAX_PICTURE = 8 * 1024 * 1024;
 
 function FieldError({ message }) {
+  const t = useT();
   if (!message) return null;
-  return <span className="mt-1 block text-xs font-semibold text-red-600">{message}</span>;
+  return <span className="mt-1 block text-xs font-semibold text-red-600">{t(message)}</span>;
 }
 
 const invalid = (err) => (err ? 'border-red-400 ring-2 ring-red-100' : '');
@@ -155,6 +163,7 @@ const invalid = (err) => (err ? 'border-red-400 ring-2 ring-red-100' : '');
  * role, approval, area, coverage, password. Editing also offers Delete.
  */
 function UserEditor({ u, barangaysOf, onClose, onDone }) {
+  const t = useT();
   const adding = !u;
   const self = Boolean(u?.is_you);
   const [form, setForm] = useState(() => ({
@@ -218,7 +227,11 @@ function UserEditor({ u, barangaysOf, onClose, onDone }) {
     const e = validate();
     setErrors(e);
     if (Object.keys(e).length) {
-      action.setError(`Please fix ${Object.keys(e).length === 1 ? 'the highlighted field' : `the ${Object.keys(e).length} highlighted fields`} before saving.`);
+      action.setError(
+        Object.keys(e).length === 1
+          ? t('Please fix the highlighted field before saving.')
+          : t('Please fix the {n} highlighted fields before saving.', { n: Object.keys(e).length }),
+      );
       return;
     }
     action.run(async () => {
@@ -250,21 +263,21 @@ function UserEditor({ u, barangaysOf, onClose, onDone }) {
       }
       if (picture) await api.setUserAvatar(id, picture.file);
       else if (removePicture && u?.avatar_url) await api.clearUserAvatar(id);
-      onDone(adding ? `${name}'s account was created.` : `${name || u.email} updated.`);
+      onDone(adding ? t("{name}'s account was created.", { name }) : t('{name} updated.', { name: name || u.email }));
     });
   };
 
   const remove = () =>
     del.run(async () => {
       await api.deleteUser(u.id);
-      onDone(`${u.full_name || u.email}'s account was deleted.`);
+      onDone(t("{name}'s account was deleted.", { name: u.full_name || u.email }));
     });
 
-  const selfTitle = self ? "You can't change your own role or approval" : undefined;
+  const selfTitle = self ? t("You can't change your own role or approval") : undefined;
   const shownPicture = removePicture ? null : u?.avatar_url;
 
   return (
-    <Drawer open onClose={onClose} title={adding ? 'Add an account' : 'Edit account'} subtitle={adding ? 'Active right away: no email code needed.' : u.email} width="max-w-xl">
+    <Drawer open onClose={onClose} title={adding ? t('Add an account') : t('Edit account')} subtitle={adding ? t('Active right away: no email code needed.') : u.email} width="max-w-xl">
       <form
         noValidate
         className="space-y-5"
@@ -276,11 +289,11 @@ function UserEditor({ u, barangaysOf, onClose, onDone }) {
         <section className="flex items-center gap-4 rounded-2xl border border-line bg-white p-4">
           <Avatar path={shownPicture} preview={picture?.url} name={form.full_name || form.email} size="lg" />
           <div className="min-w-0 space-y-2">
-            <div className="text-sm font-semibold text-ink">Profile picture</div>
+            <div className="text-sm font-semibold text-ink">{t('Profile picture')}</div>
             <div className="flex flex-wrap gap-2">
               <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg bg-brand-700 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-brand-800">
                 <Icon name="camera" className="h-4 w-4" />
-                {shownPicture || picture ? 'Change picture' : 'Upload picture'}
+                {shownPicture || picture ? t('Change picture') : t('Upload picture')}
                 <input type="file" accept="image/*" className="sr-only" onChange={choosePicture} />
               </label>
               {(picture || shownPicture) && (
@@ -291,21 +304,21 @@ function UserEditor({ u, barangaysOf, onClose, onDone }) {
                     if (u?.avatar_url) setRemovePicture(true);
                   }}
                 >
-                  Remove
+                  {t('Remove')}
                 </Button>
               )}
             </div>
             <FieldError message={errors.picture} />
-            <p className="text-xs text-muted">JPG or PNG, up to 8 MB. Cropped to a square.</p>
+            <p className="text-xs text-muted">{t('JPG or PNG, up to 8 MB. Cropped to a square.')}</p>
           </div>
         </section>
 
         <section className="grid gap-4 rounded-2xl border border-line bg-white p-4 sm:grid-cols-2">
-          <Field label="Full name *" className="sm:col-span-2">
+          <Field label={t('Full name *')} className="sm:col-span-2">
             <input className={`input ${invalid(errors.full_name)}`} value={form.full_name} onChange={(e) => set('full_name')(e.target.value)} maxLength={100} />
             <FieldError message={errors.full_name} />
           </Field>
-          <Field label={adding ? 'Email *' : 'Email'} hint={adding ? undefined : "The email is the sign-in name and links the person's records, so it can't be changed."}>
+          <Field label={adding ? t('Email *') : t('Email')} hint={adding ? undefined : t("The email is the sign-in name and links the person's records, so it can't be changed.")}>
             <input
               className={`input ${invalid(errors.email)}`}
               type="email"
@@ -317,43 +330,43 @@ function UserEditor({ u, barangaysOf, onClose, onDone }) {
             />
             <FieldError message={errors.email} />
           </Field>
-          <Field label={adding ? 'Mobile number *' : 'Mobile number'}>
+          <Field label={adding ? t('Mobile number *') : t('Mobile number')}>
             <input className={`input ${invalid(errors.phone)}`} value={form.phone} onChange={(e) => set('phone')(e.target.value)} maxLength={30} placeholder="0917 123 4567" />
             <FieldError message={errors.phone} />
           </Field>
-          <Field label="Role">
-            <Select value={form.role} onChange={set('role')} options={ROLE_OPTIONS} disabled={self} title={selfTitle} />
+          <Field label={t('Role')}>
+            <Select value={form.role} onChange={set('role')} options={ROLE_OPTIONS.map(([v, l]) => [v, t(l)])} disabled={self} title={selfTitle} />
           </Field>
           {!adding && (
-            <Field label="Status">
-              <Select value={form.status} onChange={set('status')} options={Object.entries(STATUS_LABELS)} disabled={self} title={selfTitle} />
+            <Field label={t('Status')}>
+              <Select value={form.status} onChange={set('status')} options={Object.entries(STATUS_LABELS).map(([v, l]) => [v, t(l)])} disabled={self} title={selfTitle} />
             </Field>
           )}
-          <Field label="Municipality *">
+          <Field label={t('Municipality *')}>
             <Select
               value={form.municipality}
               onChange={set('municipality')}
-              placeholder={form.municipality ? undefined : 'Choose…'}
+              placeholder={form.municipality ? undefined : t('Choose…')}
               options={muniOptions(u?.municipality)}
               className={invalid(errors.municipality)}
             />
             <FieldError message={errors.municipality} />
           </Field>
-          <Field label={adding ? 'Barangay *' : 'Barangay'}>
+          <Field label={adding ? t('Barangay *') : t('Barangay')}>
             <input className={`input ${invalid(errors.barangay)}`} value={form.barangay} onChange={(e) => set('barangay')(e.target.value)} maxLength={100} />
             <FieldError message={errors.barangay} />
           </Field>
           {form.role === 'technician' && (
-            <Field as="div" label="Coverage barangays" className="sm:col-span-2">
-              <ChipsInput value={form.coverage} onChange={set('coverage')} placeholder="Whole municipality" suggestions={barangaysOf(form.municipality)} />
+            <Field as="div" label={t('Coverage barangays')} className="sm:col-span-2">
+              <ChipsInput value={form.coverage} onChange={set('coverage')} placeholder={t('Whole municipality')} suggestions={barangaysOf(form.municipality)} />
               <div className="mt-1">
                 <CoverageHint />
               </div>
             </Field>
           )}
           <Field
-            label={adding ? 'Password *' : 'New password'}
-            hint={adding ? 'Give it to the person; they sign in with it in the app or here.' : 'Leave empty to keep the current password.'}
+            label={adding ? t('Password *') : t('New password')}
+            hint={adding ? t('Give it to the person; they sign in with it in the app or here.') : t('Leave empty to keep the current password.')}
             className="sm:col-span-2"
           >
             <input
@@ -363,7 +376,7 @@ function UserEditor({ u, barangaysOf, onClose, onDone }) {
               onChange={(e) => set('password')(e.target.value)}
               maxLength={72}
               autoComplete="new-password"
-              placeholder={adding ? 'At least 8 characters' : '••••••••'}
+              placeholder={adding ? t('At least 8 characters') : '••••••••'}
             />
             <FieldError message={errors.password} />
           </Field>
@@ -375,17 +388,17 @@ function UserEditor({ u, barangaysOf, onClose, onDone }) {
           {!adding && !self ? (
             <Button variant="danger" size="lg" onClick={() => setConfirmDelete(true)} disabled={action.busy || del.busy}>
               <Icon name="trash" className="h-4 w-4" />
-              Delete account
+              {t('Delete account')}
             </Button>
           ) : (
             <span />
           )}
           <div className="flex gap-2">
             <Button variant="secondary" size="lg" onClick={onClose}>
-              Cancel
+              {t('Cancel')}
             </Button>
             <Button type="submit" size="lg" busy={action.busy}>
-              {adding ? 'Create account' : 'Save changes'}
+              {adding ? t('Create account') : t('Save changes')}
             </Button>
           </div>
         </div>
@@ -393,16 +406,18 @@ function UserEditor({ u, barangaysOf, onClose, onDone }) {
         {confirmDelete && (
           <div role="alertdialog" className="animate-fade-in space-y-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
             <p>
-              <b>Delete {u.full_name || u.email}?</b> They can no longer sign in to the app or the dashboard. Their {fmtNum(u.observations)} observation
-              {u.observations === 1 ? '' : 's'} stay in the records and reports. This can't be undone.
+              <b>{t('Delete {name}?', { name: u.full_name || u.email })}</b>{' '}
+              {u.observations === 1
+                ? t("They can no longer sign in to the app or the dashboard. Their {n} observation stay in the records and reports. This can't be undone.", { n: fmtNum(u.observations) })
+                : t("They can no longer sign in to the app or the dashboard. Their {n} observations stay in the records and reports. This can't be undone.", { n: fmtNum(u.observations) })}
             </p>
             <ErrorNote message={del.error} />
             <div className="flex justify-end gap-2">
               <Button variant="secondary" onClick={() => setConfirmDelete(false)} disabled={del.busy}>
-                Keep the account
+                {t('Keep the account')}
               </Button>
               <Button variant="destructive" onClick={remove} busy={del.busy}>
-                Yes, delete it
+                {t('Yes, delete it')}
               </Button>
             </div>
           </div>
@@ -415,6 +430,7 @@ function UserEditor({ u, barangaysOf, onClose, onDone }) {
 // ---------------------------------------------------------------- accounts table
 
 function UserRow({ u, onEdit, onDelete }) {
+  const t = useT();
   const area = [u.barangay, u.municipality].filter(Boolean).join(', ');
   return (
     <tr className="border-b border-line/70 align-middle last:border-0 hover:bg-brand-50/40">
@@ -424,39 +440,41 @@ function UserRow({ u, onEdit, onDelete }) {
           <div className="min-w-0">
             <div className="font-medium text-ink">
               {u.full_name}
-              {u.is_you && <span className="ml-2 text-xs font-normal text-ink2">(you)</span>}
+              {u.is_you && <span className="ml-2 text-xs font-normal text-ink2">{t('(you)')}</span>}
             </div>
             <div className="text-xs text-ink2">{u.email}</div>
-            <div className="text-xs text-ink2">{u.phone || 'No phone'}</div>
+            <div className="text-xs text-ink2">{u.phone || t('No phone')}</div>
             <div className="text-xs text-muted">
-              Joined {fmtDate(u.created_at)} · {fmtNum(u.observations)} observation{u.observations === 1 ? '' : 's'}
+              {u.observations === 1
+                ? t('Joined {date} · {n} observation', { date: fmtDate(u.created_at), n: fmtNum(u.observations) })
+                : t('Joined {date} · {n} observations', { date: fmtDate(u.created_at), n: fmtNum(u.observations) })}
             </div>
           </div>
         </div>
       </td>
       <td className="td">
-        <Badge tone={ROLE_TONE[u.role] || 'gray'}>{ROLE_LABELS[u.role] || u.role}</Badge>
+        <Badge tone={ROLE_TONE[u.role] || 'gray'}>{ROLE_LABELS[u.role] ? t(ROLE_LABELS[u.role]) : u.role}</Badge>
       </td>
       <td className="td">
-        <Badge tone={STATUS_TONE[u.status] || 'gray'}>{STATUS_LABELS[u.status] || u.status}</Badge>
+        <Badge tone={STATUS_TONE[u.status] || 'gray'}>{STATUS_LABELS[u.status] ? t(STATUS_LABELS[u.status]) : u.status}</Badge>
         {!u.is_verified && (
           <div className="mt-1">
-            <Badge tone="orange">Email not verified</Badge>
+            <Badge tone="orange">{t('Email not verified')}</Badge>
           </div>
         )}
       </td>
-      <td className="td text-ink2">{area || <span className="text-muted">Not set</span>}</td>
+      <td className="td text-ink2">{area || <span className="text-muted">{t('Not set')}</span>}</td>
       <td className="td max-w-[220px] text-xs text-ink2">
-        {u.role === 'technician' ? (u.coverage_barangays.length ? u.coverage_barangays.join(', ') : 'Whole municipality') : <span className="text-muted">—</span>}
+        {u.role === 'technician' ? (u.coverage_barangays.length ? u.coverage_barangays.join(', ') : t('Whole municipality')) : <span className="text-muted">—</span>}
       </td>
       <td className="td">
         <div className="flex justify-end gap-2">
-          <Button variant="secondary" onClick={() => onEdit(u)} aria-label={`Edit ${u.full_name}`}>
+          <Button variant="secondary" onClick={() => onEdit(u)} aria-label={t('Edit {name}', { name: u.full_name })}>
             <Icon name="edit" className="h-4 w-4" />
-            Edit
+            {t('Edit')}
           </Button>
           {!u.is_you && (
-            <Button variant="danger" onClick={() => onDelete(u)} aria-label={`Delete ${u.full_name}`} title="Delete account">
+            <Button variant="danger" onClick={() => onDelete(u)} aria-label={t('Delete {name}', { name: u.full_name })} title={t('Delete account')}>
               <Icon name="trash" className="h-4 w-4" />
             </Button>
           )}
@@ -467,6 +485,7 @@ function UserRow({ u, onEdit, onDelete }) {
 }
 
 function AccountsTable({ users, barangaysOf, onSaved }) {
+  const t = useT();
   const [search, setSearch] = useState('');
   const [role, setRole] = useState('');
   const [status, setStatus] = useState('');
@@ -490,21 +509,21 @@ function AccountsTable({ users, barangaysOf, onSaved }) {
   return (
     <Panel bodyClassName="">
       <div className="grid gap-3 border-b border-line p-5 md:grid-cols-[1fr_180px_160px_200px_auto] md:items-end">
-        <Field label="Search">
-          <input className="input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Name, email, phone, barangay…" />
+        <Field label={t('Search')}>
+          <input className="input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('Name, email, phone, barangay…')} />
         </Field>
-        <Field label="Role">
-          <Select value={role} onChange={setRole} placeholder="All roles" options={ROLE_OPTIONS.map(([v, l]) => [v, `${l} (${counts[v] || 0})`])} />
+        <Field label={t('Role')}>
+          <Select value={role} onChange={setRole} placeholder={t('All roles')} options={ROLE_OPTIONS.map(([v, l]) => [v, `${t(l)} (${counts[v] || 0})`])} />
         </Field>
-        <Field label="Status">
-          <Select value={status} onChange={setStatus} placeholder="All" options={Object.entries(STATUS_LABELS)} />
+        <Field label={t('Status')}>
+          <Select value={status} onChange={setStatus} placeholder={t('All')} options={Object.entries(STATUS_LABELS).map(([v, l]) => [v, t(l)])} />
         </Field>
-        <Field label="Municipality">
-          <Select value={muni} onChange={setMuni} placeholder="All" options={[...new Set(users.map((u) => u.municipality).filter(Boolean))].sort()} />
+        <Field label={t('Municipality')}>
+          <Select value={muni} onChange={setMuni} placeholder={t('All')} options={[...new Set(users.map((u) => u.municipality).filter(Boolean))].sort()} />
         </Field>
         <Button size="lg" onClick={() => setEditing('new')}>
           <Icon name="userPlus" className="h-4 w-4" />
-          Add account
+          {t('Add account')}
         </Button>
       </div>
       <div className="overflow-x-auto">
@@ -513,7 +532,7 @@ function AccountsTable({ users, barangaysOf, onSaved }) {
             <tr>
               {['Account', 'Role', 'Status', 'Area', 'Coverage barangays', ''].map((h, i) => (
                 <th key={h || i} className="th">
-                  {h}
+                  {h && t(h)}
                 </th>
               ))}
             </tr>
@@ -524,11 +543,11 @@ function AccountsTable({ users, barangaysOf, onSaved }) {
             ))}
           </tbody>
         </table>
-        {!shown.length && <Empty title="No accounts match" />}
+        {!shown.length && <Empty title={t('No accounts match')} />}
       </div>
       <div className="border-t border-line px-5 py-3 text-xs text-muted">
-        <Badge tone={ROLE_TONE.technician}>Technician</Badge> validates observations in their coverage ·{' '}
-        <Badge tone={ROLE_TONE.agriculturist}>Agriculturist</Badge> sees every area, resolves escalations and manages this dashboard.
+        <Badge tone={ROLE_TONE.technician}>{t('Technician')}</Badge> {t('validates observations in their coverage')} ·{' '}
+        <Badge tone={ROLE_TONE.agriculturist}>{t('Agriculturist')}</Badge> {t('sees every area, resolves escalations and manages this dashboard.')}
       </div>
       {editing && <UserEditor u={editing === 'new' ? null : editing} barangaysOf={barangaysOf} onClose={() => setEditing(null)} onDone={done} />}
       {deleting && <DeleteDialog u={deleting} onClose={() => setDeleting(null)} onDone={done} />}
@@ -538,6 +557,7 @@ function AccountsTable({ users, barangaysOf, onSaved }) {
 
 /** Confirmation for the trash button in a table row. */
 function DeleteDialog({ u, onClose, onDone }) {
+  const t = useT();
   const del = useAction();
   useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && onClose();
@@ -547,7 +567,7 @@ function DeleteDialog({ u, onClose, onDone }) {
   const remove = () =>
     del.run(async () => {
       await api.deleteUser(u.id);
-      onDone(`${u.full_name || u.email}'s account was deleted.`);
+      onDone(t("{name}'s account was deleted.", { name: u.full_name || u.email }));
     });
   return (
     <div className="fixed inset-0 z-[2000] flex items-center justify-center p-4">
@@ -558,7 +578,7 @@ function DeleteDialog({ u, onClose, onDone }) {
             <Icon name="trash" className="h-6 w-6" />
           </span>
           <div className="min-w-0">
-            <h2 className="text-lg font-bold text-ink">Delete this account?</h2>
+            <h2 className="text-lg font-bold text-ink">{t('Delete this account?')}</h2>
             <div className="mt-2 flex items-center gap-2">
               <Avatar path={u.avatar_url} name={u.full_name || u.email} size="sm" />
               <div className="min-w-0">
@@ -567,8 +587,9 @@ function DeleteDialog({ u, onClose, onDone }) {
               </div>
             </div>
             <p className="mt-3 text-sm text-ink2">
-              They can no longer sign in to the app or the dashboard. Their {fmtNum(u.observations)} observation{u.observations === 1 ? '' : 's'} stay in the
-              records and reports. This can't be undone.
+              {u.observations === 1
+                ? t("They can no longer sign in to the app or the dashboard. Their {n} observation stay in the records and reports. This can't be undone.", { n: fmtNum(u.observations) })
+                : t("They can no longer sign in to the app or the dashboard. Their {n} observations stay in the records and reports. This can't be undone.", { n: fmtNum(u.observations) })}
             </p>
           </div>
         </div>
@@ -577,10 +598,10 @@ function DeleteDialog({ u, onClose, onDone }) {
         </div>
         <div className="mt-5 flex justify-end gap-2">
           <Button variant="secondary" size="lg" onClick={onClose} disabled={del.busy}>
-            Cancel
+            {t('Cancel')}
           </Button>
           <Button variant="destructive" size="lg" onClick={remove} busy={del.busy}>
-            Delete account
+            {t('Delete account')}
           </Button>
         </div>
       </div>
@@ -591,34 +612,35 @@ function DeleteDialog({ u, onClose, onDone }) {
 // ---------------------------------------------------------------- coverage grid
 
 function AreaCard({ a }) {
+  const t = useT();
   const covered = a.technicians.length > 0;
   const unassigned = a.area === UNASSIGNED;
   return (
     <div className={`rounded-2xl border bg-white p-4 shadow-sm ${covered || unassigned ? 'border-line' : 'border-orange-300'}`}>
       <div className="flex items-start justify-between gap-2">
-        <h3 className="font-bold text-ink">{a.area}</h3>
-        {!unassigned && (covered ? <Badge tone="green">Covered</Badge> : <Badge tone="orange">No technician</Badge>)}
+        <h3 className="font-bold text-ink">{unassigned ? t(UNASSIGNED) : a.area}</h3>
+        {!unassigned && (covered ? <Badge tone="green">{t('Covered')}</Badge> : <Badge tone="orange">{t('No technician')}</Badge>)}
       </div>
       <ul className="mt-2 space-y-1.5 text-sm">
-        {a.technicians.map((t) => (
-          <li key={t.email} title={t.email}>
-            <div className="truncate font-medium text-ink">{t.full_name || t.email}</div>
+        {a.technicians.map((p) => (
+          <li key={p.email} title={p.email}>
+            <div className="truncate font-medium text-ink">{p.full_name || p.email}</div>
             <div className="flex flex-wrap gap-1">
-              {t.coverage.length ? (
-                t.coverage.map((b) => (
+              {p.coverage.length ? (
+                p.coverage.map((b) => (
                   <span key={b} className="rounded-full bg-brand-100 px-2 py-0.5 text-[11px] font-semibold text-brand-900">
                     {b}
                   </span>
                 ))
               ) : (
-                <span className="text-xs text-ink2">Whole municipality</span>
+                <span className="text-xs text-ink2">{t('Whole municipality')}</span>
               )}
             </div>
           </li>
         ))}
-        {a.agriculturists.map((t) => (
-          <li key={t.email} className="truncate text-ink2" title={t.email}>
-            {t.full_name || t.email} <span className="text-xs">(agriculturist)</span>
+        {a.agriculturists.map((p) => (
+          <li key={p.email} className="truncate text-ink2" title={p.email}>
+            {p.full_name || p.email} <span className="text-xs">{t('(agriculturist)')}</span>
           </li>
         ))}
       </ul>
@@ -631,7 +653,7 @@ function AreaCard({ a }) {
         ].map(([label, n, tone]) => (
           <div key={label}>
             <div className={`text-base font-bold tabular-nums ${n ? tone || 'text-ink' : 'text-ink'}`}>{fmtNum(n)}</div>
-            <div className="text-[10px] uppercase tracking-wide text-muted">{label}</div>
+            <div className="text-[10px] uppercase tracking-wide text-muted">{t(label)}</div>
           </div>
         ))}
       </div>
@@ -640,6 +662,7 @@ function AreaCard({ a }) {
 }
 
 function CoverageGrid() {
+  const t = useT();
   const areas = useAsync(() => api.areas(), []);
   const list = areas.data || [];
   const uncovered = list.filter((a) => a.area !== UNASSIGNED && !a.technicians.length);
@@ -652,8 +675,15 @@ function CoverageGrid() {
           <div className="mb-4 space-y-3">
             {uncovered.length > 0 && (
               <Notice tone="orange">
-                {uncovered.length} municipalit{uncovered.length === 1 ? 'y has' : 'ies have'} no technician: {uncovered.map((a) => a.area).join(', ')}. Observations
-                from there wait in no one's queue. Assign a technician under Accounts.
+                {uncovered.length === 1
+                  ? t("{n} municipality has no technician: {list}. Observations from there wait in no one's queue. Assign a technician under Accounts.", {
+                      n: uncovered.length,
+                      list: uncovered.map((a) => a.area).join(', '),
+                    })
+                  : t("{n} municipalities have no technician: {list}. Observations from there wait in no one's queue. Assign a technician under Accounts.", {
+                      n: uncovered.length,
+                      list: uncovered.map((a) => a.area).join(', '),
+                    })}
               </Notice>
             )}
             <CoverageHint />
@@ -670,6 +700,7 @@ function CoverageGrid() {
 }
 
 export default function UsersPage({ onChanged }) {
+  const t = useT();
   const [tab, setTab] = useState('accounts');
   const [coverageKey, setCoverageKey] = useState(0);
   const users = useAsync(() => api.users(), []);
@@ -678,7 +709,7 @@ export default function UsersPage({ onChanged }) {
   const barangaysOf = useBarangays(list);
 
   const done = (message) => {
-    setNotice(`${message} Changes apply right away, in the app and on the dashboard.`);
+    setNotice(`${message} ${t('Changes apply right away, in the app and on the dashboard.')}`);
     users.reload();
     setCoverageKey((k) => k + 1);
     onChanged?.();
@@ -687,8 +718,10 @@ export default function UsersPage({ onChanged }) {
   return (
     <div>
       <PageHeader
-        title="User management"
-        description="Approve new accounts; add, edit or delete accounts (details, role, profile picture, password); and set the municipality and barangays a technician covers. Coverage decides whose queue an observation lands in."
+        title={t('User management')}
+        description={t(
+          'Approve new accounts; add, edit or delete accounts (details, role, profile picture, password); and set the municipality and barangays a technician covers. Coverage decides whose queue an observation lands in.',
+        )}
       />
       {notice && (
         <div className="mb-4">
@@ -704,8 +737,8 @@ export default function UsersPage({ onChanged }) {
             value={tab}
             onChange={setTab}
             options={[
-              ['accounts', `Accounts (${list.length})`],
-              ['coverage', 'Coverage by municipality'],
+              ['accounts', t('Accounts ({n})', { n: list.length })],
+              ['coverage', t('Coverage by municipality')],
             ]}
           />
           {tab === 'accounts' ? <AccountsTable users={list} barangaysOf={barangaysOf} onSaved={done} /> : <CoverageGrid key={coverageKey} />}

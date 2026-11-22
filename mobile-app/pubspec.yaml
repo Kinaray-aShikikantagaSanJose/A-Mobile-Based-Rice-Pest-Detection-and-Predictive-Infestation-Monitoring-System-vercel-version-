@@ -50,3 +50,5 @@ flutter:
   assets:
 
     - assets/branding/
+    # Antique barangay boundaries for offline GPS lookups (lib/services/antique_geofence.dart).
+    - assets/geo/

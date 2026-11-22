@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
+import { useT } from '../i18n/index.jsx';
 import { fmtConf, pestLabel } from '../lib.js';
 
 const MAIN = '#FACC15'; // boxes of the pest the model result settled on
@@ -12,6 +13,7 @@ const MAX_LABELS = 30; // beyond this, labels only on hover
  * an <img> shown at its natural aspect ratio (no cropping) and line up at any size.
  */
 export default function DetectionPhoto({ scanId, detections = [], mainPest }) {
+  const t = useT();
   const [src, setSrc] = useState('');
   const [failed, setFailed] = useState(false);
   const [showBoxes, setShowBoxes] = useState(true);
@@ -37,11 +39,11 @@ export default function DetectionPhoto({ scanId, detections = [], mainPest }) {
       <div className="flex min-h-[220px] items-center justify-center overflow-hidden rounded-2xl border border-line bg-ink/90">
         {src ? (
           <div className="relative inline-block max-w-full">
-            <img src={src} alt={`Observation ${scanId}`} className="block h-auto max-h-[62vh] w-auto max-w-full" />
+            <img src={src} alt={t('Observation {id}', { id: scanId })} className="block h-auto max-h-[62vh] w-auto max-w-full" />
             {showBoxes &&
               detections.map((d, i) => {
                 const color = d.pest === mainPest ? MAIN : OTHER;
-                const tip = `${pestLabel(d.pest)} ${fmtConf(d.conf)}`;
+                const tip = `${t(pestLabel(d.pest))} ${fmtConf(d.conf)}`;
                 return (
                   <div
                     key={i}
@@ -71,22 +73,22 @@ export default function DetectionPhoto({ scanId, detections = [], mainPest }) {
               })}
           </div>
         ) : (
-          <span className="p-8 text-sm text-brand-100">{failed ? 'Photo unavailable.' : 'Loading photo…'}</span>
+          <span className="p-8 text-sm text-brand-100">{failed ? t('Photo unavailable.') : t('Loading photo…')}</span>
         )}
       </div>
       <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-ink2">
         {hasBoxes ? (
           <label className="flex cursor-pointer items-center gap-2">
             <input type="checkbox" className="h-4 w-4 accent-brand-700" checked={showBoxes} onChange={(e) => setShowBoxes(e.target.checked)} />
-            Show model result boxes ({detections.length})
+            {t('Show model result boxes ({n})', { n: detections.length })}
             <span className="flex items-center gap-1">
               <span className="inline-block h-2.5 w-2.5" style={{ background: MAIN }} />
-              {pestLabel(mainPest)}
+              {t(pestLabel(mainPest))}
             </span>
             {otherPests.length > 0 && (
               <span className="flex items-center gap-1">
                 <span className="inline-block h-2.5 w-2.5" style={{ background: OTHER }} />
-                {otherPests.map(pestLabel).join(', ')}
+                {otherPests.map((p) => t(pestLabel(p))).join(', ')}
               </span>
             )}
           </label>
@@ -95,7 +97,7 @@ export default function DetectionPhoto({ scanId, detections = [], mainPest }) {
         )}
         {src && (
           <a href={src} target="_blank" rel="noreferrer" className="font-semibold text-brand-700 hover:text-brand-900">
-            Open full size
+            {t('Open full size')}
           </a>
         )}
       </div>
