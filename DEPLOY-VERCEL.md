@@ -123,8 +123,52 @@ farmers) and by Postgres row level security — the API deletes as the
 
 Tests: `python -m pytest -q` in `rice-pest-api` (the database tests run
 only when `TEST_DATABASE_URL` points to a throwaway PostgreSQL + PostGIS
-database prepared with the two SQL files; never the live one), `flutter
-test` in `mobile-app`.
+database prepared with the SQL files, including `supabase/03_2026_12_update.sql`;
+never the live one), `flutter test` in `mobile-app`, and `npm run lint`,
+`npm test` and `npm run build` in `web-dashboard`.
+
+---
+
+## Update 2026-12 (new model, review workflow, monitoring, offline data)
+
+Do these once, in this order:
+
+1. **Database (Supabase > SQL Editor):** run `supabase/03_2026_12_update.sql`.
+   It adds columns, a table, constraints and indexes, and changes no existing
+   data. New CHECK constraints are `NOT VALID`, so old rows are never
+   rejected. It is safe to run more than once. It adds:
+   * `scans.image_relevance`
+   * `scans.land_type_updated_by` / `scans.land_type_updated_at`
+   * `scan_reviews.reviewer_note`
+   * the `scan_recommendations` table
+   * `level_criteria.provisional` / `source_reference` / `confirmed_by` /
+     `confirmed_at` (every existing threshold starts as provisional)
+   * indexes for paged lists
+
+   Until it has run, the API keeps working with these features switched off.
+   Reviews then don't require a reviewer note, and recommendations answer 503.
+2. **API:** redeploy. The function now ships
+   `models/rice_pest_yolo26s.onnx` (36 MB) instead of the old 12 MB model.
+   The whole function measures about 243 MB uncompressed (dependencies
+   ~205 MB, measured from the Linux wheels). That is under Vercel's 500 MB
+   limit for Python functions. Optional env vars (defaults shown):
+
+   | Variable | Default | Meaning |
+   |---|---|---|
+   | `DETECTOR_UNVERIFIED_CLASSES` | `rice_bug,rice_stem_borer` | Model outputs that are never used to name a pest (see `models/MODEL_SELECTION.md`) |
+   | `RELEVANCE_MIN_PLANT_FRACTION` | `0.10` | Image relevance cut-off (provisional) |
+   | `DETECTOR_THREADS` | `1` on Vercel, else `2` | ONNX Runtime threads |
+   | `DETECTOR_MODEL_PATH` | `models/rice_pest_yolo26s.onnx` | Another model file |
+   | `NO_PEST_MAX_SCORE`, `NO_PEST_MIN_SIDE`, `SPREAD_MIN_RECORDS`, `UPLAND_MIN_ELEVATION_M` | unchanged | see `docs/MONITORING.md` |
+3. **Dashboard and mobile web app:** redeploy (no new variables). Rebuild the
+   Android APK as before.
+
+What changed, and the rules behind it:
+* `docs/MONITORING.md`: queues, levels, thresholds, relevance, hotspots,
+  spread, outcomes, land type, paging.
+* `docs/GLOSSARY.md`: terms and translation status.
+* `rice-pest-api/models/MODEL_SELECTION.md`: why this model file was chosen,
+  and the class-label problem.
 
 ---
 
@@ -209,7 +253,10 @@ needs it on Vercel) and the `rice-pest-api/sql/` files; ignores `.vercel/`.
 * **No LAN discovery.** On Vercel there is no local network or UDP; the apps
   use the fixed HTTPS address they are built with.
 * **Cold starts:** the first request after a few idle minutes takes a few
-  seconds longer (Python start + loading the 12 MB detection model).
+  seconds longer (Python start). The 36 MB detection model loads only when
+  the first photo of that instance is analysed; that took about 0.3 s on a
+  laptop CPU. Each analysis runs the model twice (photo + mirror image): about
+  0.2 s per run on a laptop CPU, so expect roughly 0.5–1 s per photo on one vCPU.
 * **Function time limit:** 60 s per request (set in `vercel.json`); uploads
   with detection take a few seconds.
 * **Email:** OTP codes are sent through Gmail SMTP from Vercel. This

@@ -47,6 +47,11 @@ def main(dry_run: bool) -> None:
                          "WHERE id = :i AND validation_status = 'pending'"),
                     {"r": ai.get("result") or "uncertain", "m": json.dumps(ai.get("metadata") or {}), "i": r.id},
                 )
+            if schema.relevance_ready(db) and ai.get("relevance"):
+                db.execute(
+                    text("UPDATE scans SET image_relevance = :rel WHERE id = :i AND validation_status = 'pending'"),
+                    {"rel": ai["relevance"], "i": r.id},
+                )
             db.execute(
                 text(
                     """

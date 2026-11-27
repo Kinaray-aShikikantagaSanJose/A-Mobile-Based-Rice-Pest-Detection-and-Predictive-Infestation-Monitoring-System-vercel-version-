@@ -17,4 +17,6 @@ export default defineConfig({
   plugins: [react()],
   server: { proxy },
   preview: { proxy },
+  // npm test: unit and component tests in a simulated browser.
+  test: { environment: 'jsdom', include: ['src/**/*.test.{js,jsx}'] },
 });

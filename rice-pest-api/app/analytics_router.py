@@ -1,9 +1,11 @@
 from datetime import date, timedelta
 
-from fastapi import APIRouter, Depends, Query
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
-from . import insights
+from . import i18n, insights
 from .access import STAFF, require_viewer
 from .database import get_geo_db, local_today
 from .trend_service import MIN_WEEKS_FOR_MODEL, predict_weekly_pests
@@ -52,29 +54,43 @@ def hotspots(
 
 @router.get("/spread")
 def spread(
+    request: Request,
     pest: str = "",
     level: str = "",
     municipality: str = "",
     crop_stage: str = "",
     land_type: str = "",
+    start: str = "",
     end: str = "",
     window: int = Query(7, description="Days per window: 7 (week to week), 14 or 30."),
+    lang: str = "",
     db: Session = Depends(get_geo_db),
     viewer: dict = Depends(require_viewer(*STAFF)),
 ):
-    """Directional spread: for each pest, the centre of its validated cases in
-    two consecutive windows ending on `end` (default today), and the direction
-    and distance between them. Observed movement only, not a forecast."""
+    """Directional spread: for each pest, the centre of its validated cases
+    with a reliable location in two consecutive periods, the direction and
+    distance between them, and the barangay of each centre where the boundary
+    data supports it ("cannot be determined" otherwise).
+
+    Periods: two windows of `window` days ending on `end` (default today), or,
+    with both `start` and `end`, the custom range split into two halves
+    (at least 2 days, at most 366). Observed movement only, not a forecast.
+    Texts are in ?lang= / X-Palay-Language / the account's language."""
     window = window if window in insights.SPREAD_WINDOWS else 7
     last = insights.parse_day(end) or local_today()
-    first = last - timedelta(days=2 * window - 1)
-    rows = insights.load_scans(db, viewer, start=first, end=last)
+    first_custom = insights.parse_day(start) if start and end else None
+    if first_custom and not (1 <= (last - first_custom).days <= 365):
+        raise HTTPException(status_code=400, detail="Choose a date range of 2 to 366 days.")
+    w1_start, _, _, _ = insights.spread_windows(first_custom, last, window)
+    rows = insights.load_scans(db, viewer, start=w1_start, end=last)
     points = [
         r for r in insights.filter_scans(rows, pest=pest, level=level, municipality=municipality,
                                          crop_stage=crop_stage, land_type=land_type)
         if r["lat"] is not None
     ]
-    return {"area": insights.area_label(viewer), **insights.spread(points, last, window)}
+    language = i18n.request_language(request, viewer, lang)
+    return {"area": insights.area_label(viewer),
+            **insights.spread(points, last, window, start=first_custom, lang=language)}
 
 
 @router.get("/records")
@@ -88,26 +104,52 @@ def records(
     start: str = "",
     end: str = "",
     land_type: str = "",
+    relevance: str = "",
+    sort: str = insights.DEFAULT_SORT,
+    limit: Optional[int] = Query(None, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_geo_db),
     viewer: dict = Depends(require_viewer(*STAFF)),
 ):
+    """Observations the viewer may see, filtered and sorted on the server.
+    `limit`/`offset` page the result; `total` is the number of matching
+    rows, so every page (and the CSV export, which uses the same filters)
+    covers the same set. Without `limit` every matching row is returned."""
     statuses = None if status == "all" else ((status,) if status in insights.STATUSES else insights.VALIDATED)
     rows = insights.load_scans(db, viewer, statuses=statuses, start=insights.parse_day(start),
                                end=insights.parse_day(end))
+    matching = insights.sort_rows(
+        insights.filter_scans(rows, pest=pest, level=level, municipality=municipality,
+                              crop_stage=crop_stage, q=q, land_type=land_type, relevance=relevance),
+        sort,
+    )
     return {
         "area": insights.area_label(viewer),
-        "rows": insights.filter_scans(rows, pest=pest, level=level, municipality=municipality,
-                                      crop_stage=crop_stage, q=q, land_type=land_type),
+        "total": len(matching),
+        "limit": limit,
+        "offset": offset,
+        "sort": sort if sort.lstrip("-") in insights.SORTS else insights.DEFAULT_SORT,
+        "rows": insights.page(matching, limit, offset),
         "facets": insights.facets(rows),
     }
 
 
 @router.get("/treatments")
 def treatments(
+    outcome: str = "",
+    limit: Optional[int] = Query(None, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_geo_db),
     viewer: dict = Depends(require_viewer(*STAFF)),
 ):
-    return insights.treatment_followups(db, viewer)
+    """Treatments with their follow-ups (before/after). `outcome` filters;
+    `limit`/`offset` page the items (newest application first); `summary`
+    and `overdue` always cover everything the viewer may see."""
+    data = insights.treatment_followups(db, viewer)
+    items = [i for i in data["items"] if not outcome or i["outcome"] == outcome
+             or (outcome == "pending" and i["pending"])]
+    return {**data, "total": len(items), "limit": limit, "offset": offset,
+            "items": insights.page(items, limit, offset)}
 
 
 @router.get("/monthly")

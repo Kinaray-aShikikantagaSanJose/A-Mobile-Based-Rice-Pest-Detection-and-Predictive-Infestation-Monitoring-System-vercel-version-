@@ -89,6 +89,11 @@ void _mockPlugins() {
       }
     },
   );
+  // Photos are saved under the app's documents folder (path_provider).
+  messenger.setMockMethodCallHandler(
+    const MethodChannel('plugins.flutter.io/path_provider'),
+    (call) async => '${Directory.systemTemp.path}/palay_smoke_docs',
+  );
   messenger.setMockStreamHandler(
     const EventChannel('flutter.baseflow.com/geolocator_service_updates'),
     MockStreamHandler.inline(onListen: (args, sink) {}),
@@ -201,6 +206,32 @@ Record _serverRecord(Map<String, dynamic> overrides) => Record(
     ...overrides,
   },
 );
+
+/// Lets the screen's network timeouts (15 s) run out before the test ends,
+/// so no timer is left pending (the requests fail fast without a server).
+Future<void> _settleTimers(WidgetTester tester) async {
+  await tester.pump(const Duration(seconds: 30));
+  await tester.pumpAndSettle();
+}
+
+/// The camera hands back the photo; the photo step then asks to confirm it
+/// ("Use this photo") before moving on.
+Future<void> _acceptPhoto(WidgetTester tester) async {
+  // Saving the photo is real file I/O, which only completes outside the
+  // test's fake clock.
+  bool onPhotoStep() =>
+      find.text('Open the camera').evaluate().isNotEmpty || find.text('Take it again').evaluate().isNotEmpty;
+  for (var i = 0; i < 20 && onPhotoStep() && find.text('Use this photo').evaluate().isEmpty; i++) {
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 100)));
+    await tester.pumpAndSettle();
+  }
+  final use = find.text('Use this photo');
+  if (use.evaluate().isNotEmpty) {
+    await tester.ensureVisible(use);
+    await tester.tap(use);
+    await tester.pumpAndSettle();
+  }
+}
 
 void main() {
   setUpAll(() async {
@@ -469,6 +500,7 @@ void main() {
 
       await tester.pumpWidget(_routerApp('/observe', const ObserveArgs()));
       await tester.pumpAndSettle();
+      await _acceptPhoto(tester);
       // Camera returned the photo -> step 2, location found (mocked GPS).
       expect(find.text('Is this your field?'), findsOneWidget);
       expect(find.text('Step 2 of 8'), findsOneWidget);
@@ -526,6 +558,7 @@ void main() {
       expect(find.text('Ready to send?'), findsOneWidget);
       expect(find.text('Disease report'), findsOneWidget);
       expect(find.textContaining('Trap-based'), findsNothing);
+      await _settleTimers(tester);
     },
   );
 
@@ -538,6 +571,7 @@ void main() {
     addTearDown(() => _photo = null);
     await tester.pumpWidget(_routerApp('/observe', const ObserveArgs()));
     await tester.pumpAndSettle();
+    await _acceptPhoto(tester);
     await tester.tap(find.text('Yes, this is my field'));
     await tester.pumpAndSettle();
     await tester.tap(find.textContaining('Rainfed lowland'));
@@ -569,6 +603,7 @@ void main() {
       isNotNull,
     );
     await _shot(tester, 'f30_disease_notes');
+    await _settleTimers(tester);
   });
 
   testWidgets('observation flow: retake of a returned observation', (
@@ -590,6 +625,7 @@ void main() {
       _routerApp('/observe', ObserveArgs(retakeOf: returned)),
     );
     await tester.pumpAndSettle();
+    await _acceptPhoto(tester);
     // New photo -> straight to the summary with the original's details.
     expect(find.text('Retake photo'), findsOneWidget);
     expect(find.text('Ready to send?'), findsOneWidget);
@@ -600,6 +636,7 @@ void main() {
     expect(find.text('Irrigated lowland'), findsOneWidget);
     expect(find.text('Pest report'), findsOneWidget);
     await _shot(tester, 'f30_retake_review');
+    await _settleTimers(tester);
   });
 
   testWidgets('result: online pest with AI', (tester) async {
@@ -612,7 +649,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('For technician validation'), findsOneWidget);
+    expect(find.text('Waiting for review'), findsOneWidget);
     expect(find.text('Brown Planthopper'), findsOneWidget);
     expect(find.text('14 insects counted'), findsOneWidget);
     await _shot(tester, 'f46_online_pest');

@@ -34,11 +34,12 @@ runs/
 /_backups/
 
 # Trained model binaries
-# The API on Vercel loads rice-pest-api/models/rice_pest.onnx from the
-# repository, so that one file must be committed (12 MB, under GitHub's limit).
+# The API on Vercel loads rice-pest-api/models/rice_pest_yolo26s.onnx from the
+# repository, so that one file must be committed (36 MB: under GitHub's 100 MB
+# limit; GitHub warns above 50 MB). See rice-pest-api/models/MODEL_SELECTION.md.
 *.pt
 *.onnx
-!rice-pest-api/models/rice_pest.onnx
+!rice-pest-api/models/rice_pest_yolo26s.onnx
 *.weights
 *.h5
 *.pkl

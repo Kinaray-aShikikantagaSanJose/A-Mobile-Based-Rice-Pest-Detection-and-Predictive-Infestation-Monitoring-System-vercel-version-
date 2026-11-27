@@ -3,28 +3,44 @@ import { api } from '../api.js';
 import AuthImage from '../components/AuthImage.jsx';
 import RecordDrawer from '../components/RecordDrawer.jsx';
 import { useT } from '../i18n/index.jsx';
-import { Badge, Button, Empty, ErrorNote, Field, LevelBadge, Loading, Panel, PageHeader, Select, STATUS_OPTIONS, StatusBadge, Table } from '../components/ui.jsx';
-import { CROP_STAGES, fmtCount, fmtDate, LAND_TYPES, landTypeLabel, LEVELS, useAsync, useDebounced } from '../lib.js';
+import { Badge, Button, Empty, ErrorNote, Field, LevelBadge, Loading, Pager, Panel, PageHeader, RelevanceBadge, Select, STATUS_OPTIONS, StatusBadge, Table } from '../components/ui.jsx';
+import { CROP_STAGES, fmtCount, fmtDate, LAND_TYPES, landTypeLabel, LEVELS, useAction, useAsync, useDebounced } from '../lib.js';
 
 const STATUSES = [...STATUS_OPTIONS, ['all', 'All statuses']];
+// Paged on the server: the filters and the sort apply to every page, and the
+// CSV export uses exactly the same filters (all matching rows, no paging).
 const PAGE = 50;
-const NO_FILTERS = { status: 'validated', pest: '', level: '', municipality: '', crop_stage: '', land_type: '', start: '', end: '' };
+const NO_FILTERS = {
+  status: 'validated', pest: '', level: '', municipality: '', crop_stage: '', land_type: '', start: '', end: '',
+  relevance: '', sort: '-created_at',
+};
+const SORTS = [
+  ['-created_at', 'Newest first'],
+  ['created_at', 'Oldest first'],
+  ['-level', 'Highest level first'],
+  ['municipality', 'Municipality (A-Z)'],
+  ['pest', 'Pest (A-Z)'],
+];
 
 export default function RecordsPage({ viewer, onChanged }) {
   const t = useT();
   const isAgri = viewer.role === 'agriculturist';
   const [search, setSearch] = useState('');
   const [f, setF] = useState(NO_FILTERS);
-  const [shown, setShown] = useState(PAGE);
+  const [offset, setOffset] = useState(0);
   const [openId, setOpenId] = useState(null);
   const q = useDebounced(search);
-  const params = { ...f, q };
-  const res = useAsync(() => api.records(params), [JSON.stringify(params)]);
+  const filters = { ...f, q };
+  const res = useAsync(() => api.records({ ...filters, limit: PAGE, offset }), [JSON.stringify(filters), offset]);
   const set = (key) => (value) => {
-    setShown(PAGE);
+    setOffset(0);
     setF((prev) => ({ ...prev, [key]: value }));
   };
   const rows = res.data?.rows || [];
+  const total = res.data?.total ?? rows.length;
+  const exporter = useAction();
+  const exportCsv = () =>
+    exporter.run(() => api.downloadReport('records', filters, `observations-${new Date().toISOString().slice(0, 10)}.csv`));
   const filtered = search || JSON.stringify(f) !== JSON.stringify(NO_FILTERS);
 
   const columns = [
@@ -61,7 +77,10 @@ export default function RecordsPage({ viewer, onChanged }) {
         r.is_disease ? (
           <Badge tone="purple">{t('Disease report')}</Badge>
         ) : (
-          <span className="font-medium">{['No pests found', 'Not identified yet', 'Unidentified', 'Outside the supported pests'].includes(r.pest) ? t(r.pest) : r.pest}</span>
+          <span className="flex flex-wrap items-center gap-1.5">
+            <span className="font-medium">{t(r.pest)}</span>
+            <RelevanceBadge relevance={r.image_relevance} />
+          </span>
         ),
     },
     {
@@ -112,7 +131,7 @@ export default function RecordsPage({ viewer, onChanged }) {
               className="input"
               value={search}
               onChange={(e) => {
-                setShown(PAGE);
+                setOffset(0);
                 setSearch(e.target.value);
               }}
               placeholder={t('Observation #, name, barangay, pest, diagnosis, notes…')}
@@ -126,7 +145,7 @@ export default function RecordsPage({ viewer, onChanged }) {
               value={f.pest}
               onChange={set('pest')}
               placeholder={t('All')}
-              options={(res.data?.facets.pests || []).map((p) => [p, ['Disease report', 'No pests found', 'Not identified yet', 'Unidentified'].includes(p) ? t(p) : p])}
+              options={(res.data?.facets.pests || []).map((p) => [p, t(p)])}
             />
           </Field>
           <Field label={t('Infestation level')}>
@@ -136,7 +155,23 @@ export default function RecordsPage({ viewer, onChanged }) {
             <Select value={f.crop_stage} onChange={set('crop_stage')} placeholder={t('All stages')} options={CROP_STAGES.map((c) => [c, t(c)])} />
           </Field>
           <Field label={t('Land type')}>
-            <Select value={f.land_type} onChange={set('land_type')} placeholder={t('All land types')} options={LAND_TYPES.map(([v, l]) => [v, t(l)])} />
+            <Select
+              value={f.land_type}
+              onChange={set('land_type')}
+              placeholder={t('All land types')}
+              options={[...LAND_TYPES.map(([v, l]) => [v, t(l)]), ['not_recorded', t('Not recorded')]]}
+            />
+          </Field>
+          <Field label={t('Photo check')}>
+            <Select
+              value={f.relevance}
+              onChange={set('relevance')}
+              placeholder={t('All photos')}
+              options={[['possibly_unrelated', t('Possibly unrelated photo')], ['relevant', t('Relevant')]]}
+            />
+          </Field>
+          <Field label={t('Sort by')}>
+            <Select value={f.sort} onChange={set('sort')} options={SORTS.map(([v, l]) => [v, t(l)])} />
           </Field>
           {isAgri && (
             <Field label={t('Municipality')}>
@@ -153,8 +188,14 @@ export default function RecordsPage({ viewer, onChanged }) {
           </div>
         </div>
         <div className="flex items-center justify-between px-5 py-3 text-xs text-ink2">
-          <span>{res.data ? t(rows.length === 1 ? '{n} observation' : '{n} observations', { n: rows.length.toLocaleString('en-PH') }) : ' '}</span>
+          <span>{res.data ? t(total === 1 ? '{n} observation' : '{n} observations', { n: total.toLocaleString('en-PH') }) : ' '}</span>
           <span className="flex items-center gap-3">
+            {isAgri && (
+              <Button variant="secondary" size="sm" busy={exporter.busy} disabled={!total} onClick={exportCsv}
+                title={t('Downloads every observation that matches these filters, not only this page.')}>
+                {t('Export these records (CSV)')}
+              </Button>
+            )}
             {res.loading && res.data && <span>{t('Updating…')}</span>}
             {filtered && (
               <Button
@@ -170,24 +211,18 @@ export default function RecordsPage({ viewer, onChanged }) {
             )}
           </span>
         </div>
-        <ErrorNote message={res.error} onRetry={res.reload} />
+        <ErrorNote message={res.error || exporter.error} onRetry={res.error ? res.reload : undefined} />
         {!res.data && res.loading ? (
           <Loading />
         ) : (
           <Table
-            rows={rows.slice(0, shown)}
+            rows={rows}
             columns={columns}
             onRowClick={(r) => setOpenId(r.id)}
             empty={<Empty title={t('No observations match')}>{t('Try clearing a filter or widening the date range.')}</Empty>}
           />
         )}
-        {rows.length > shown && (
-          <div className="border-t border-line p-4 text-center">
-            <Button variant="secondary" onClick={() => setShown((n) => n + PAGE)}>
-              {t('Show {n} more', { n: Math.min(PAGE, rows.length - shown) })}
-            </Button>
-          </div>
-        )}
+        <Pager total={total} limit={PAGE} offset={offset} onChange={setOffset} loading={res.loading} />
       </Panel>
       {openId && (
         <RecordDrawer

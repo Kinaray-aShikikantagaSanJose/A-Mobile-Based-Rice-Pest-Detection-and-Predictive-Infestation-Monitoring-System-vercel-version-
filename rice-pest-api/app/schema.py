@@ -94,3 +94,25 @@ def deleted_records_ready(db: Session) -> bool:
 
 def permissions_ready(db: Session) -> bool:
     return has_table(db, "role_permissions")
+
+
+# ---- supabase/03_2026_12_update.sql
+
+def relevance_ready(db: Session) -> bool:
+    return has_column(db, "scans", "image_relevance")
+
+
+def reviewer_note_ready(db: Session) -> bool:
+    return has_column(db, "scan_reviews", "reviewer_note")
+
+
+def recommendations_ready(db: Session) -> bool:
+    return has_table(db, "scan_recommendations")
+
+
+def land_type_audit_ready(db: Session) -> bool:
+    return has_column(db, "scans", "land_type_updated_by")
+
+
+def criteria_provisional_ready(db: Session) -> bool:
+    return has_column(db, "level_criteria", "provisional")

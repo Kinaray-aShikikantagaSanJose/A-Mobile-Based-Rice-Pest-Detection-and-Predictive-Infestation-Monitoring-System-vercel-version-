@@ -47,13 +47,21 @@ class _DetectionPhotoState extends State<DetectionPhoto> {
 
   Future<void> _resolve() async {
     final uuid = widget.clientUuid ?? 'server_${widget.scanId}';
-    final cached = await LocalStore.instance.localPhoto(uuid);
-    final path = cached ??
-        await LocalStore.instance.cacheServerPhoto(
-          uuid,
-          widget.scanId,
-          await ApiClient.downloadImage('/sync/scans/${widget.scanId}/image'),
-        );
+    final String path;
+    try {
+      final cached = await LocalStore.instance.localPhoto(uuid);
+      path = cached ??
+          await LocalStore.instance.cacheServerPhoto(
+            uuid,
+            widget.scanId,
+            await ApiClient.downloadImage('/sync/scans/${widget.scanId}/image'),
+          );
+    } catch (e) {
+      // No signal and no copy on the phone: show "Photo unavailable", not a
+      // spinner that never ends.
+      if (mounted) setState(() => _failed = true);
+      return;
+    }
     if (!mounted) return;
     final provider = localImageProvider(path);
     final stream = provider.resolve(const ImageConfiguration());

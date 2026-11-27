@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { fmtConf, fmtCount, LEVELS, PEST_OPTIONS, pestLabel, useAction, useDebounced } from '../lib.js';
 import Icon from './icons.jsx';
-import { Button, ErrorNote, Field, LEVEL_COLOR, LevelBadge, Select } from './ui.jsx';
+import { Button, ErrorNote, Field, LEVEL_COLOR, LevelBadge, Notice, Select, useConfirm } from './ui.jsx';
 import { useT } from '../i18n/index.jsx';
 
 const RETURN_REASONS = [
@@ -11,6 +11,74 @@ const RETURN_REASONS = [
   'The photo is too dark. Please retake it in daylight.',
   "The photo doesn't show a rice crop.",
 ];
+
+/** Same rule as the server (observations.meaningful): enough characters and two real words. */
+export function meaningful(text, minChars = 10) {
+  const s = (text || '').split(/\s+/).filter(Boolean).join(' ');
+  const words = s.split(' ').filter((w) => /\p{L}/u.test(w));
+  return s.length >= minChars && words.length >= 2 && new Set(s.replace(/ /g, '').toLowerCase()).size > 2;
+}
+
+/** The reviewer's own note (review history), separate from what the farmer reads. */
+function ReviewerNoteField({ value, onChange, invalid }) {
+  const t = useT();
+  return (
+    <Field
+      label={t('Reviewer note *')}
+      hint={t('What you checked and why you chose this level. Kept in the review history for technicians and agriculturists; it is not the guidance the farmer reads.')}
+    >
+      <textarea className={`input min-h-[64px] ${invalid ? 'border-red-400 ring-2 ring-red-100' : ''}`} value={value}
+        onChange={(e) => onChange(e.target.value)} maxLength={2000}
+        placeholder={t('e.g. Counted 6 rice bugs on two panicles; grains not yet damaged')} />
+    </Field>
+  );
+}
+
+/** Options from the APPROVED treatment library the reviewer recommends (not treatments applied). */
+function RecommendationPicker({ pest, value, onChange }) {
+  const t = useT();
+  const [state, setState] = useState({ items: [], error: '', loading: true });
+  useEffect(() => {
+    let alive = true;
+    api
+      .library()
+      .then((rows) => alive && setState({ items: rows.filter((r) => r.status === 'approved'), error: '', loading: false }))
+      .catch((e) => alive && setState({ items: [], error: e.message, loading: false }));
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const options = state.items.filter((r) => r.pest === pest);
+  useEffect(() => {
+    onChange((prev) => prev.filter((id) => options.some((o) => o.id === id)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pest, state.items]);
+  const toggle = (id) => onChange((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  return (
+    <Field as="div" label={`${t('Recommend treatment options')} (${t('optional')})`}
+      hint={t('Picked from the approved treatment library. The farmer sees them as recommendations; what they actually apply is recorded separately.')}>
+      {state.loading ? (
+        <p className="text-xs text-muted">{t('Loading…')}</p>
+      ) : state.error ? (
+        <p className="text-xs text-red-600">{t(state.error)}</p>
+      ) : options.length ? (
+        <div className="space-y-1.5">
+          {options.map((o) => (
+            <label key={o.id} className="flex cursor-pointer items-start gap-2 text-sm text-ink">
+              <input type="checkbox" className="mt-0.5 h-4 w-4 accent-brand-700" checked={value.includes(o.id)} onChange={() => toggle(o.id)} />
+              <span>
+                <span className="font-medium">{o.title}</span>{' '}
+                <span className="text-xs text-ink2">· {t(o.option_type)}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+      ) : (
+        <p className="text-xs text-muted">{t('No approved options for this pest yet.')}</p>
+      )}
+    </Field>
+  );
+}
 
 /** Suggested level from the API (never computed here). Debounced as the reviewer edits. */
 export function useLevelSuggestion({ pest, crop_stage, count, indicators, enabled = true }) {
@@ -125,7 +193,11 @@ function ReasonForm({ kind, busy, error, onSubmit }) {
   const [reason, setReason] = useState('');
   const [attempted, setAttempted] = useState(false);
   const isReturn = kind === 'return';
-  const missing = reason.trim() ? [] : [isReturn ? t('Write what the farmer should fix, or pick one of the reasons below.') : t('Write why this case needs an agriculturist.')];
+  const missing = !reason.trim()
+    ? [isReturn ? t('Write what the farmer should fix, or pick one of the reasons below.') : t('Write why this case needs an agriculturist.')]
+    : !meaningful(reason, isReturn ? 6 : 10)
+      ? [isReturn ? t('Write a clear reason the farmer can act on.') : t('Explain the escalation in a sentence the agriculturist can use.')]
+      : [];
   const send = () => {
     setAttempted(true);
     if (!missing.length) onSubmit({ action: kind, reason: reason.trim() });
@@ -263,6 +335,8 @@ function PestValidate({ scan, pest, count, countReady, escalated, busy, error, o
   const [picked, setPicked] = useState(null); // null = follow the suggestion
   const [diagnosis, setDiagnosis] = useState('');
   const [guidance, setGuidance] = useState('');
+  const [note, setNote] = useState('');
+  const [recIds, setRecIds] = useState([]);
   const [attempted, setAttempted] = useState(false);
   const s = useLevelSuggestion({ pest, crop_stage: scan.crop_stage, count, indicators, enabled: countReady && Boolean(pest) });
   const fresh = s.data && s.params?.pest === pest; // not a leftover from the previously chosen pest
@@ -286,6 +360,9 @@ function PestValidate({ scan, pest, count, countReady, escalated, busy, error, o
     !level && t('Pick the infestation level: LOW, MEDIUM or HIGH.'),
     escalated && !diagnosis.trim() && t('Write the diagnosis.'),
     escalated && !guidance.trim() && t('Write the guidance for the farmer.'),
+    !meaningful(note) && t('Add a reviewer note: what you checked and why you chose this level.'),
+    meaningful(note) && [diagnosis.trim(), guidance.trim()].some((x) => x && x.toLowerCase() === note.trim().toLowerCase())
+      && t('The reviewer note must be your own note, not a copy of the diagnosis or guidance.'),
   ].filter(Boolean);
   const loadingSuggestion = s.pending && Boolean(pest) && countReady;
   const send = () => {
@@ -301,6 +378,8 @@ function PestValidate({ scan, pest, count, countReady, escalated, busy, error, o
       damage_indicators: indicators,
       diagnosis: diagnosis.trim(),
       guidance: guidance.trim(),
+      reviewer_note: note.trim(),
+      recommended_library_ids: recIds,
     });
   };
 
@@ -317,7 +396,7 @@ function PestValidate({ scan, pest, count, countReady, escalated, busy, error, o
             {available.map((i) => (
               <label key={i} className="flex cursor-pointer items-start gap-2 text-sm text-ink">
                 <input type="checkbox" className="mt-0.5 h-4 w-4 accent-brand-700" checked={indicators.includes(i)} onChange={() => toggle(i)} />
-                {i}
+                {s.data?.indicator_labels?.[i] || t(i)}
               </label>
             ))}
           </div>
@@ -338,6 +417,11 @@ function PestValidate({ scan, pest, count, countReady, escalated, busy, error, o
               <li key={r}>{r}</li>
             ))}
           </ul>
+        )}
+        {fresh && s.data.provisional && (
+          <p className="mt-2 text-xs font-semibold text-orange-700">
+            {t('Provisional thresholds: not yet confirmed by an agriculturist. Rely on what you see in the field.')}
+          </p>
         )}
         {s.error && <p className="mt-2 text-xs text-red-600">{t("Couldn't load the suggestion ({error}). You can still set the level yourself.", { error: s.error })}</p>}
       </div>
@@ -363,6 +447,8 @@ function PestValidate({ scan, pest, count, countReady, escalated, busy, error, o
         setGuidance={setGuidance}
         showErrors={attempted}
       />
+      <ReviewerNoteField value={note} onChange={setNote} invalid={attempted && !meaningful(note)} />
+      {pest && pest !== 'other' && <RecommendationPicker pest={pest} value={recIds} onChange={setRecIds} />}
 
       {attempted && <MissingNote items={missing} />}
       <ErrorNote message={error} />
@@ -382,15 +468,21 @@ function DiseaseValidate({ escalated, busy, error, onSubmit }) {
   const [level, setLevel] = useState(null);
   const [diagnosis, setDiagnosis] = useState('');
   const [guidance, setGuidance] = useState('');
+  const [note, setNote] = useState('');
   const [attempted, setAttempted] = useState(false);
   const missing = [
     !level && t('Pick how bad it is in the field: LOW, MEDIUM or HIGH.'),
     escalated && !diagnosis.trim() && t('Write the diagnosis.'),
     escalated && !guidance.trim() && t('Write the guidance for the farmer.'),
+    !meaningful(note) && t('Add a reviewer note: what you checked and why you chose this level.'),
+    meaningful(note) && [diagnosis.trim(), guidance.trim()].some((x) => x && x.toLowerCase() === note.trim().toLowerCase())
+      && t('The reviewer note must be your own note, not a copy of the diagnosis or guidance.'),
   ].filter(Boolean);
   const send = () => {
     setAttempted(true);
-    if (!missing.length) onSubmit({ action: 'validate', level, diagnosis: diagnosis.trim(), guidance: guidance.trim() });
+    if (!missing.length) {
+      onSubmit({ action: 'validate', level, diagnosis: diagnosis.trim(), guidance: guidance.trim(), reviewer_note: note.trim() });
+    }
   };
   return (
     <div className="space-y-4 rounded-xl border border-brand-200 bg-brand-50/50 p-4">
@@ -406,6 +498,7 @@ function DiseaseValidate({ escalated, busy, error, onSubmit }) {
         setGuidance={setGuidance}
         showErrors={attempted}
       />
+      <ReviewerNoteField value={note} onChange={setNote} invalid={attempted && !meaningful(note)} />
       {attempted && <MissingNote items={missing} />}
       <ErrorNote message={error} />
       <div className="flex flex-wrap items-center justify-end gap-3">
@@ -585,14 +678,36 @@ export default function ReviewForm({ scan, viewer, onDone }) {
   const action = useAction();
   const canEscalate = viewer.role === 'technician';
   const escalated = scan.status === 'escalated';
-  const submit = (body) =>
-    action.run(async () => {
+  const [confirm, dialog] = useConfirm();
+  // A decision notifies the farmer and can't be undone here: ask first.
+  const QUESTIONS = {
+    validate: ['Validate this observation?', 'The level becomes the official record and the farmer is notified.'],
+    return: ['Return it to the farmer?', 'The farmer is asked to take a new photo. This observation stays in the records as returned.'],
+    escalate: ['Escalate to an agriculturist?', 'It leaves your queue and goes to the To Be Validated queue.'],
+  };
+  const submit = async (body) => {
+    const [title, message] = QUESTIONS[body.action];
+    if (!(await confirm({ title: t(title), message: t(message), confirmLabel: t('Yes, continue') }))) return;
+    await action.run(async () => {
       const updated = await api.review(scan.id, body);
       onDone(DONE[body.action](updated, t), updated);
     });
-  return scan.report_type === 'pest' ? (
-    <PestReview scan={scan} canEscalate={canEscalate} escalated={escalated} action={action} submit={submit} />
-  ) : (
-    <DiseaseReview canEscalate={canEscalate} escalated={escalated} action={action} submit={submit} />
+  };
+  return (
+    <>
+      {scan.image_relevance === 'possibly_unrelated' && (
+        <div className="mb-4">
+          <Notice tone="orange">
+            {t('This photo may not show a rice plant or field. Check it before validating, and return it if it is not a photo of the field.')}
+          </Notice>
+        </div>
+      )}
+      {scan.report_type === 'pest' ? (
+        <PestReview scan={scan} canEscalate={canEscalate} escalated={escalated} action={action} submit={submit} />
+      ) : (
+        <DiseaseReview canEscalate={canEscalate} escalated={escalated} action={action} submit={submit} />
+      )}
+      {dialog}
+    </>
   );
 }

@@ -4,12 +4,14 @@ import 'dart:math';
 import 'package:flutter/widgets.dart';
 
 import '../controllers/auth_controller.dart';
+import '../l10n/app_language.dart';
 import '../models/record.dart';
 import '../platform/local_files.dart';
 import '../utils/formatters.dart';
 import 'api_client.dart';
 import 'local_store.dart';
 import 'notification_service.dart';
+import 'sync_policy.dart';
 import '../utils/api_config.dart';
 
 /// Result of submitting an observation.
@@ -37,7 +39,63 @@ class LevelSuggestion {
   final String level;
   final List<String> reasons;
   final List<String> availableIndicators;
-  const LevelSuggestion(this.level, this.reasons, this.availableIndicators);
+
+  /// The threshold for this pest and stage is not confirmed by an
+  /// agriculturist yet.
+  final bool provisional;
+
+  /// English indicator (the value sent back) -> label in the app language.
+  final Map<String, String> indicatorLabels;
+  const LevelSuggestion(this.level, this.reasons, this.availableIndicators,
+      {this.provisional = false, this.indicatorLabels = const {}});
+
+  factory LevelSuggestion.fromJson(Map<String, dynamic> data) => LevelSuggestion(
+        data['level'] as String? ?? '',
+        [for (final r in data['reasons'] as List? ?? const []) '$r'],
+        [for (final i in data['available_indicators'] as List? ?? const []) '$i'],
+        provisional: data['provisional'] == true,
+        indicatorLabels: {
+          for (final e in (data['indicator_labels'] as Map? ?? const {}).entries) '${e.key}': '${e.value}',
+        },
+      );
+
+  /// What to show for the English [indicator].
+  String labelFor(String indicator) {
+    final l = indicatorLabels[indicator];
+    return l == null || l.trim().isEmpty ? tr(indicator) : l;
+  }
+}
+
+/// An approved option in the treatment library (GET /dashboard/library).
+class LibraryOption {
+  final int id;
+  final String pest, optionType, title, recommendation, status;
+  const LibraryOption(this.id, this.pest, this.optionType, this.title, this.recommendation, this.status);
+
+  factory LibraryOption.fromJson(Map<String, dynamic> j) => LibraryOption(
+        (j['id'] as num?)?.toInt() ?? 0,
+        j['pest'] as String? ?? '',
+        j['option_type'] as String? ?? '',
+        j['title'] as String? ?? '',
+        j['recommendation'] as String? ?? '',
+        j['status'] as String? ?? '',
+      );
+}
+
+/// Approved options a reviewer may recommend for [pest].
+List<LibraryOption> approvedOptionsFor(Iterable<LibraryOption> library, String? pest) => [
+      for (final o in library)
+        if (o.status == 'approved' && pest != null && o.pest == pest) o,
+    ];
+
+/// A screen's data and, when it came from the phone, when it was saved.
+class Loaded<T> {
+  final T data;
+
+  /// Null = fresh from the server (or saved without a time).
+  final DateTime? savedAt;
+  final bool fromCache;
+  const Loaded(this.data, {this.savedAt, this.fromCache = false});
 }
 
 /// Random v4 UUID; the server uses it to ignore retried uploads.
@@ -87,6 +145,10 @@ class SyncService {
 
   static int _unread = 0;
   static Future<void>? _inFlight;
+
+  /// Waits between automatic runs after failures (see sync_policy.dart).
+  static final SyncBackoff backoff = SyncBackoff();
+  static Timer? _retryTimer;
 
   /// Uploads in progress, by client_uuid: a sync and a submit of the same
   /// observation share one request instead of sending it twice.
@@ -167,20 +229,36 @@ class SyncService {
 
   /// Uploads everything waiting, then refreshes records and the badge.
   /// Concurrent callers share one run. Never throws.
-  static Future<void> syncAll() => _inFlight ??= _syncAll().whenComplete(() => _inFlight = null);
+  ///
+  /// Automatic runs wait out the backoff after failures and skip items the
+  /// server refused. [force] (the person pulled to refresh, the connection
+  /// came back, the app was resumed) runs now; [retryRefused] ("Send now",
+  /// "Try sending now") also sends refused items once more.
+  static Future<void> syncAll({bool force = false, bool retryRefused = false}) {
+    if (_inFlight != null) return _inFlight!;
+    if (!force && !retryRefused && !backoff.allows(DateTime.now())) return Future.value();
+    return _inFlight = _syncAll(retryRefused: retryRefused).whenComplete(() => _inFlight = null);
+  }
 
-  static Future<void> _syncAll() async {
+  static Future<void> _syncAll({bool retryRefused = false}) async {
     if (!_canSync) return;
+    var transient = false;
     try {
       // One item failing never blocks the others; only no signal or a
       // signed-out session stops the run.
-      for (final o in await LocalStore.instance.pendingObservations()) {
+      final observations = itemsToSend(await LocalStore.instance.pendingObservations(), (o) => o.lastError,
+          retryRefused: retryRefused);
+      for (final o in observations) {
         try {
           await _upload(o);
         } on ApiException catch (e) {
-          if (e.isOffline || e.statusCode == 401) return;
+          if (e.isOffline || e.statusCode == 401) {
+            transient = true;
+            return;
+          }
           if ((e.statusCode ?? 0) >= 500) {
             debugPrint('[Sync] server error for ${o.clientUuid}: ${e.message}');
+            transient = true;
             continue; // try again next time
           }
           await LocalStore.instance.setObservationError(o.clientUuid, e.message);
@@ -190,15 +268,24 @@ class SyncService {
           debugPrint('[Sync] upload of ${o.clientUuid} failed: $e');
         }
       }
-      for (final t in await LocalStore.instance.pendingTreatments()) {
+      final treatments = itemsToSend(await LocalStore.instance.pendingTreatments(), (t) => t.lastError,
+          retryRefused: retryRefused);
+      for (final t in treatments) {
         try {
           await _sendTreatment(t);
         } on ApiException catch (e) {
-          if (e.isOffline || e.statusCode == 401) return;
-          if ((e.statusCode ?? 0) >= 500) continue;
-          // Refused for good (e.g. the record changed): it can never succeed.
+          if (e.isOffline || e.statusCode == 401) {
+            transient = true;
+            return;
+          }
+          if ((e.statusCode ?? 0) >= 500) {
+            transient = true;
+            continue;
+          }
+          // Refused (e.g. the record changed): keep it on the phone with the
+          // reason, shown on its record, instead of dropping it silently.
           debugPrint('[Sync] treatment refused: ${e.message}');
-          await LocalStore.instance.removeTreatment(t.clientUuid);
+          await LocalStore.instance.setTreatmentError(t.clientUuid, e.message);
         } catch (e) {
           debugPrint('[Sync] treatment ${t.clientUuid} failed: $e');
         }
@@ -207,7 +294,10 @@ class SyncService {
       try {
         await ApiClient.refreshProfile();
       } on ApiException catch (e) {
-        if (e.isOffline) return;
+        if (e.isOffline) {
+          transient = true;
+          return;
+        }
       }
       final seen = _saves;
       final mine = [for (final r in await ApiClient.get('/sync/scans/mine') as List) r as Map<String, dynamic>];
@@ -223,12 +313,81 @@ class SyncService {
       await _prefetchPhotos(mine);
     } on ApiException catch (e) {
       debugPrint('[Sync] stopped: ${e.message}');
+      if (_transient(e)) transient = true;
     } catch (e) {
       debugPrint('[Sync] failed: $e');
+    } finally {
+      _afterRun(transient: transient);
+      revision.value++;
+      await _updateBadge();
+    }
+  }
+
+  /// After a failed run, tries again on its own after 30 s, 1 min, 2 min,
+  /// ... (at most the regular 3-minute interval); a run that reached the
+  /// server resets that.
+  static void _afterRun({required bool transient}) {
+    _retryTimer?.cancel();
+    _retryTimer = null;
+    if (!transient) {
+      backoff.succeeded();
+      return;
+    }
+    final wait = backoff.failed(DateTime.now());
+    if (_canSync) _retryTimer = Timer(wait, () => syncAll());
+  }
+
+  /// Stops a scheduled retry (signed out).
+  static void cancelRetry() {
+    _retryTimer?.cancel();
+    _retryTimer = null;
+    backoff.succeeded();
+  }
+
+  /// "Try sending now" on one observation the server refused or that is
+  /// still waiting: sends it once more and returns the server's answer, if any.
+  static Future<SubmitOutcome> retryObservation(OutboxObservation o) async {
+    try {
+      final rec = await _upload(o);
+      revision.value++;
+      return SubmitOutcome(rec, uploaded: true);
+    } on ApiException catch (e) {
+      if (_transient(e)) return SubmitOutcome(Record(pending: o, localPhoto: o.imagePath), uploaded: false);
+      await LocalStore.instance.setObservationError(o.clientUuid, e.message);
+      revision.value++;
+      return SubmitOutcome(Record(pending: o, localPhoto: o.imagePath), uploaded: false, error: e.message);
+    } on _PhotoMissing catch (e) {
+      await LocalStore.instance.setObservationError(o.clientUuid, e.message);
+      revision.value++;
+      return SubmitOutcome(Record(pending: o, localPhoto: o.imagePath), uploaded: false, error: e.message);
+    }
+  }
+
+  /// Sends a refused treatment once more (the person asked). Returns the
+  /// server's reason if it is refused again, '' if it went out, null if
+  /// there is no signal.
+  static Future<String?> retryTreatment(String clientUuid) async {
+    final all = await LocalStore.instance.pendingTreatments();
+    final t = all.where((x) => x.clientUuid == clientUuid).firstOrNull;
+    if (t == null) return '';
+    try {
+      await _sendTreatment(t);
+      return '';
+    } on ApiException catch (e) {
+      if (_transient(e)) return null;
+      await LocalStore.instance.setTreatmentError(clientUuid, e.message);
+      return e.message;
     } finally {
       revision.value++;
       await _updateBadge();
     }
+  }
+
+  /// Drops a treatment the server refused (the person's choice).
+  static Future<void> discardTreatment(String clientUuid) async {
+    await LocalStore.instance.removeTreatment(clientUuid);
+    revision.value++;
+    await _updateBadge();
   }
 
   /// Photos per sync run, so a phone with many records catches up gradually.
@@ -278,7 +437,7 @@ class SyncService {
     final store = LocalStore.instance;
     try {
       final data = await ApiClient.get('/sync/scans/$serverId') as Map<String, dynamic>;
-      if (data['is_mine'] == true) await store.saveRecord(data);
+      await _keepRecord(data);
       return Record(server: data, localPhoto: await store.localPhoto(data['client_uuid'] as String?));
     } on ApiException catch (e) {
       if (e.statusCode == 410) {
@@ -287,10 +446,51 @@ class SyncService {
         rethrow;
       }
       if (!e.isOffline) rethrow;
-      final cached = await store.cachedRecord(serverId);
+      final cached = await cachedRecord(serverId);
       if (cached == null) rethrow;
-      return Record(server: cached, localPhoto: await store.localPhoto(cached['client_uuid'] as String?));
+      return cached.data;
     }
+  }
+
+  static String _recordKey(int id) => 'record_$id';
+
+  /// Keeps the server's copy on the phone: the user's own records in My
+  /// Records, others (opened by staff) in the cache, so they open offline.
+  static Future<void> _keepRecord(Map<String, dynamic> data) async {
+    final id = (data['id'] as num?)?.toInt();
+    if (data['is_mine'] == true) {
+      await LocalStore.instance.saveRecord(data);
+    } else if (id != null) {
+      await LocalStore.instance.putCache(_recordKey(id), data);
+    }
+  }
+
+  /// The copy of a record saved on this phone (own records, or ones staff
+  /// opened before), or null. No network.
+  static Future<Loaded<Record>?> cachedRecord(int serverId) async {
+    final store = LocalStore.instance;
+    final own = await store.cachedRecord(serverId);
+    if (own != null) {
+      return Loaded(Record(server: own, localPhoto: await store.localPhoto(own['client_uuid'] as String?)),
+          fromCache: true);
+    }
+    final entry = await store.getCacheEntry(_recordKey(serverId));
+    final data = entry?.data;
+    if (data is! Map<String, dynamic>) return null;
+    return Loaded(Record(server: data, localPhoto: await store.localPhoto(data['client_uuid'] as String?)),
+        savedAt: entry!.savedAt, fromCache: true);
+  }
+
+  /// Corrects the land type of a record (online only). The server checks
+  /// who may (the submitter before review, technicians in their coverage).
+  static Future<Record> changeLandType(int scanId, String landType, {String reason = ''}) async {
+    final data = await ApiClient.patch('/sync/scans/$scanId/land-type', {
+      'land_type': landType,
+      if (reason.trim().isNotEmpty) 'reason': reason.trim(),
+    }) as Map<String, dynamic>;
+    await _keepRecord(data);
+    revision.value++;
+    return Record(server: data, localPhoto: await LocalStore.instance.localPhoto(data['client_uuid'] as String?));
   }
 
   /// Treatments logged on the phone for a record that haven't gone out yet.
@@ -310,6 +510,7 @@ class SyncService {
               optionType: t.libraryId == null ? 'own' : '',
               appliedAt: t.appliedAt,
               pending: true,
+              error: t.lastError,
             ),
           ),
       ];
@@ -369,21 +570,37 @@ class SyncService {
 
   /// The server's notifications; the last copy saved on the phone when offline.
   static Future<List<AppNotification>> notifications() async {
-    Map<String, dynamic> data;
     try {
-      data = await ApiClient.get('/sync/notifications') as Map<String, dynamic>;
-      await LocalStore.instance.putCache('notifications', data);
-      _unread = (data['unread'] as num?)?.toInt() ?? 0;
-      await _updateBadge();
-      // On screen already: no phone pop-up for these.
-      await NotificationService.instance.announceServerItems(_items(data), silent: true);
+      return await fetchNotifications();
     } on ApiException catch (e) {
-      final cached = await LocalStore.instance.getCache('notifications');
-      if (!e.isOffline || cached is! Map<String, dynamic>) rethrow;
-      data = cached;
+      final cached = await cachedNotifications();
+      if (!e.isOffline || cached == null) rethrow;
+      return cached.data;
     }
+  }
+
+  /// The server's notifications (throws without signal), saved on the phone.
+  static Future<List<AppNotification>> fetchNotifications() async {
+    final data = await ApiClient.get('/sync/notifications') as Map<String, dynamic>;
+    await LocalStore.instance.putCache('notifications', data);
+    _unread = (data['unread'] as num?)?.toInt() ?? 0;
+    await _updateBadge();
+    // On screen already: no phone pop-up for these.
+    await NotificationService.instance.announceServerItems(_items(data), silent: true);
+    return _parseNotifications(data);
+  }
+
+  /// The notifications saved on the phone, or null. No network.
+  static Future<Loaded<List<AppNotification>>?> cachedNotifications() async {
+    final entry = await LocalStore.instance.getCacheEntry('notifications');
+    final data = entry?.data;
+    if (data is! Map<String, dynamic>) return null;
+    return Loaded(_parseNotifications(data), savedAt: entry!.savedAt, fromCache: true);
+  }
+
+  static List<AppNotification> _parseNotifications(Map<String, dynamic> data) {
     return [
-      for (final n in (data['items'] as List))
+      for (final n in (data['items'] as List? ?? const []))
         AppNotification(
           (n['id'] as num).toInt(),
           (n['scan_id'] as num?)?.toInt(),
@@ -487,20 +704,40 @@ class SyncService {
 
   // ---------------------------------------------------------------- technician / agriculturist
 
-  /// Technicians: pending observations in their area, oldest first.
-  /// Agriculturists: escalated cases.
+  /// Technicians: the "Not Validated" queue (pending observations in their
+  /// area, initial review), oldest first. Escalated cases ("To Be
+  /// Validated") are for agriculturists on the dashboard.
   /// Offline, the last list saved on the phone (reviewing still needs signal).
   static Future<List<Record>> queue(String kind) async {
-    final key = 'queue_$kind';
-    List data;
     try {
-      data = await ApiClient.get('/sync/queue', query: {'kind': kind}) as List;
-      await LocalStore.instance.putCache(key, data);
+      return await fetchQueue(kind);
     } on ApiException catch (e) {
-      final cached = await LocalStore.instance.getCache(key);
-      if (!e.isOffline || cached is! List) rethrow;
-      data = cached;
+      final cached = await cachedQueue(kind);
+      if (!e.isOffline || cached == null) rethrow;
+      return cached.data;
     }
+  }
+
+  /// The queue from the server (throws without signal), saved on the phone.
+  static Future<List<Record>> fetchQueue(String kind) async {
+    final isTech = AuthControllerImpl.instance.role == AppRole.technician;
+    final data = await ApiClient.get('/sync/queue', query: {
+      'kind': kind,
+      if (isTech) 'queue': 'not_validated',
+    }) as List;
+    await LocalStore.instance.putCache('queue_$kind', data);
+    return _queueRecords(kind, data);
+  }
+
+  /// The queue saved on the phone, or null. No network.
+  static Future<Loaded<List<Record>>?> cachedQueue(String kind) async {
+    final entry = await LocalStore.instance.getCacheEntry('queue_$kind');
+    final data = entry?.data;
+    if (data is! List) return null;
+    return Loaded(_queueRecords(kind, data), savedAt: entry!.savedAt, fromCache: true);
+  }
+
+  static List<Record> _queueRecords(String kind, List data) {
     _queueSizes[kind] = data.length;
     queueCount.value = _queueSizes.values.fold(0, (a, b) => a + b);
     return [for (final r in data) Record(server: r as Map<String, dynamic>)];
@@ -528,9 +765,26 @@ class SyncService {
 
   static Future<Record> review(int scanId, Map<String, dynamic> body) async {
     final data = await ApiClient.post('/sync/scans/$scanId/review', body) as Map<String, dynamic>;
-    if (data['is_mine'] == true) await LocalStore.instance.saveRecord(data);
+    await _keepRecord(data);
     revision.value++;
     return Record(server: data);
+  }
+
+  /// The treatment library (approved entries for technicians), saved on the
+  /// phone; the saved copy when offline.
+  static Future<List<LibraryOption>> library() async {
+    Object? data;
+    try {
+      data = await ApiClient.get('/dashboard/library');
+      await LocalStore.instance.putCache('library', data);
+    } on ApiException catch (e) {
+      data = await LocalStore.instance.getCache('library');
+      if (!e.isOffline || data is! List) rethrow;
+    }
+    return [
+      for (final o in (data as List? ?? const []))
+        if (o is Map) LibraryOption.fromJson(o.cast<String, dynamic>()),
+    ];
   }
 
   static Future<LevelSuggestion> suggestLevel({
@@ -545,11 +799,7 @@ class SyncService {
       if (count != null) 'count': '$count',
       'indicators': indicators.join('|'),
     }) as Map<String, dynamic>;
-    return LevelSuggestion(
-      data['level'] as String,
-      [for (final r in data['reasons'] as List) '$r'],
-      [for (final i in data['available_indicators'] as List) '$i'],
-    );
+    return LevelSuggestion.fromJson(data);
   }
 }
 
@@ -559,7 +809,7 @@ class AutoSync with WidgetsBindingObserver {
   AutoSync._();
   static final AutoSync instance = AutoSync._();
 
-  static const Duration _interval = Duration(minutes: 3);
+  static const Duration _interval = kSyncInterval;
 
   /// Notifications are checked more often than the full sync.
   static const Duration _newsInterval = Duration(seconds: 30);
@@ -577,13 +827,14 @@ class AutoSync with WidgetsBindingObserver {
     _onConnectionChanged();
     _timer = Timer.periodic(_interval, (_) => SyncService.syncAll());
     _newsTimer = Timer.periodic(_newsInterval, (_) => SyncService.checkNews());
-    SyncService.syncAll();
+    SyncService.syncAll(force: true);
   }
 
+  // Connection back or app resumed: send at once, whatever the backoff.
   void _onConnectionChanged() {
     final connected = ApiConfig.connected.value;
     if (connected && !_wasConnected) {
-      SyncService.syncAll();
+      SyncService.syncAll(force: true);
       SyncService.checkNews();
     }
     _wasConnected = connected;
@@ -592,7 +843,7 @@ class AutoSync with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      SyncService.syncAll();
+      SyncService.syncAll(force: true);
       SyncService.checkNews();
     }
   }
@@ -600,6 +851,7 @@ class AutoSync with WidgetsBindingObserver {
   void stop() {
     _timer?.cancel();
     _newsTimer?.cancel();
+    SyncService.cancelRetry();
     ApiConfig.connected.removeListener(_onConnectionChanged);
     WidgetsBinding.instance.removeObserver(this);
     _started = false;

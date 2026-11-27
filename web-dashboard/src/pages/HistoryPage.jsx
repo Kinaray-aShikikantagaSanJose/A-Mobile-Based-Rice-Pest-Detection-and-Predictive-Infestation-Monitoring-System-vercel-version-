@@ -13,12 +13,13 @@ const corrected = (r) => r.action === 'validated' && r.report_type === 'pest' &&
 
 export default function HistoryPage({ viewer }) {
   const t = useT();
-  const res = useAsync(() => api.myReviews(), []);
+  // Newest 500 decisions (server-side limit); filtering below works on those.
+  const res = useAsync(() => api.myReviews({ limit: 500 }), []);
   const [show, setShow] = useState('all');
   const [search, setSearch] = useState('');
   const [shown, setShown] = useState(PAGE);
   const [openId, setOpenId] = useState(null);
-  const all = res.data || [];
+  const all = res.data?.items || [];
   const n = (action) => all.filter((r) => r.action === action).length;
   const s = search.trim().toLowerCase().replace(/^#/, '');
   const rows = all.filter(

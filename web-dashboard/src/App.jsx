@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, clearSession, hasToken, logout, SESSION_EXPIRED } from './api.js';
+import { api, clearSession, hasToken, LIVE_DATA, logout, SAVED_DATA, SESSION_EXPIRED } from './api.js';
 import Avatar from './components/Avatar.jsx';
 import { Logo } from './components/Brand.jsx';
 import ErrorBoundary from './components/ErrorBoundary.jsx';
@@ -9,6 +9,7 @@ import LoadingScreen from './components/LoadingScreen.jsx';
 import LoginScreen, { accessProblem, STAFF } from './components/LoginScreen.jsx';
 import NotificationBell, { Toast } from './components/NotificationBell.jsx';
 import Sidebar from './components/Sidebar.jsx';
+import { ConfirmDialog } from './components/ui.jsx';
 import { currentLocale, hasStoredLanguage, setLanguage, translate, useI18n } from './i18n/index.jsx';
 import { useInterval, useOnline } from './lib.js';
 import ActivityPage from './pages/ActivityPage.jsx';
@@ -182,6 +183,9 @@ export default function App() {
   const [seen, setSeen] = useState(null);
   const [toast, setToast] = useState(null);
   const lastTotal = useRef(null);
+  // Sign-out asks first; "saved" = a page is showing data saved before the connection dropped.
+  const [confirmSignOut, setConfirmSignOut] = useState(false);
+  const [saved, setSaved] = useState(null);
 
   const toLogin = useCallback((message = '') => {
     clearSession();
@@ -193,6 +197,17 @@ export default function App() {
     setLoginMessage(message);
     setMenuOpen(false);
     setPhase('login');
+  }, []);
+
+  useEffect(() => {
+    const onSaved = (e) => setSaved(e.detail?.savedAt || null);
+    const onLive = () => setSaved(null);
+    window.addEventListener(SAVED_DATA, onSaved);
+    window.addEventListener(LIVE_DATA, onLive);
+    return () => {
+      window.removeEventListener(SAVED_DATA, onSaved);
+      window.removeEventListener(LIVE_DATA, onLive);
+    };
   }, []);
 
   useEffect(() => {
@@ -344,6 +359,7 @@ export default function App() {
 
   /** Sign out: the server ends the session too (best effort, works offline). */
   const signOut = () => {
+    setConfirmSignOut(false);
     logout();
     toLogin('');
   };
@@ -389,9 +405,8 @@ export default function App() {
         badges={badges}
         viewer={viewer}
         collapsed={collapsed}
-        onToggle={() => setCollapsed((c) => !c)}
         onNavigate={go}
-        onSignOut={signOut}
+        onSignOut={() => setConfirmSignOut(true)}
         mobileOpen={menuOpen}
         onCloseMobile={() => setMenuOpen(false)}
         freshId={fresh > 0 ? inbox : null}
@@ -446,6 +461,13 @@ export default function App() {
             {t("You're offline. Data can't load or be saved until the connection is back.")}
           </div>
         )}
+        {saved && (
+          <div role="status" className="border-b border-orange-200 bg-orange-50 px-4 py-2 text-center text-sm text-orange-800">
+            {t('Showing data saved on {time} because the server could not be reached. It updates when the connection is back.', {
+              time: new Date(saved).toLocaleString(currentLocale()),
+            })}
+          </div>
+        )}
 
         <main className="mx-auto w-full max-w-[1400px] flex-1 p-4 sm:p-6 lg:p-8">
           <ErrorBoundary resetKey={current.id}>
@@ -453,6 +475,14 @@ export default function App() {
           </ErrorBoundary>
         </main>
       </div>
+      <ConfirmDialog
+        open={confirmSignOut}
+        title={t('Sign out?')}
+        message={t('You will need your email and password to sign in again. Anything you have not saved on this page, such as a review you are writing, will be lost.')}
+        confirmLabel={t('Sign out')}
+        onConfirm={signOut}
+        onCancel={() => setConfirmSignOut(false)}
+      />
       <Toast
         toast={toastShown}
         onClose={closeToast}

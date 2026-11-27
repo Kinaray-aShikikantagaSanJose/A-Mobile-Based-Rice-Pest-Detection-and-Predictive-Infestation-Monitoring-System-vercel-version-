@@ -7,6 +7,7 @@ import field from './parts/field.js';
 import records from './parts/records.js';
 import reference from './parts/reference.js';
 import server from './parts/server.js';
+import update2026 from './parts/update2026.js';
 import users from './parts/users.js';
 
 export const TRANSLATIONS = {
@@ -18,4 +19,5 @@ export const TRANSLATIONS = {
   ...reference,
   ...field,
   ...users,
+  ...update2026,
 };

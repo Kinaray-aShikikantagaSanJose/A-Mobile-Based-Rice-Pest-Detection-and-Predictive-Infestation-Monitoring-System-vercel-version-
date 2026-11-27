@@ -58,7 +58,7 @@ class _F26TreatmentsState extends State<F26Treatments> {
   }
 
   Future<void> _refresh() async {
-    await SyncService.syncAll();
+    await SyncService.syncAll(force: true);
     await _load();
   }
 
@@ -116,7 +116,7 @@ class _F26TreatmentsState extends State<F26Treatments> {
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(AppSpacing.hPad, AppSpacing.sm, AppSpacing.hPad, AppSpacing.xl),
-      children: staggered([
+      children: [MaxContentWidth(child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: staggered([
         _Summary(followUps: _followUps.length, ready: ready.length, applied: applied.length),
         if (_followUps.isNotEmpty) ...[
           const SizedBox(height: AppSpacing.xl),
@@ -157,7 +157,7 @@ class _F26TreatmentsState extends State<F26Treatments> {
             ),
           ),
         ],
-      ]),
+      ])))],
     );
   }
 }

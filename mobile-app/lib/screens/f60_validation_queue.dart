@@ -12,8 +12,10 @@ import '../utils/formatters.dart';
 import '../widgets/app_widgets.dart';
 import '../widgets/motion.dart';
 
-/// Technicians' validation queue: observations from their assigned area
-/// waiting for review, oldest first, with pest and disease reports kept apart.
+/// Technicians' validation queue: the "Not Validated" queue (observations
+/// from their assigned area waiting for the first review), oldest first,
+/// with pest and disease reports kept apart. Escalated cases go to the
+/// agriculturist's "To Be Validated" queue on the dashboard.
 class F60ValidationQueue extends StatefulWidget {
   const F60ValidationQueue({super.key});
 
@@ -26,6 +28,10 @@ class _F60ValidationQueueState extends State<F60ValidationQueue> with WidgetsBin
   final Map<String, List<Record>?> _items = {'pest': null, 'disease': null};
   String? _error;
   bool _offline = false;
+  bool _loading = false;
+
+  /// When the lists shown were saved on the phone (null = fresh).
+  DateTime? _savedAt;
 
   @override
   void initState() {
@@ -48,14 +54,31 @@ class _F60ValidationQueueState extends State<F60ValidationQueue> with WidgetsBin
     if (state == AppLifecycleState.resumed) _load();
   }
 
+  /// Cache first: the last saved lists show at once, then the server's.
   Future<void> _load() async {
+    if (mounted) setState(() => _loading = true);
+    if (_items['pest'] == null) {
+      try {
+        final cached = await Future.wait([SyncService.cachedQueue('pest'), SyncService.cachedQueue('disease')]);
+        if (mounted && _items['pest'] == null && cached.any((c) => c != null)) {
+          setState(() {
+            _items['pest'] = cached[0]?.data ?? const [];
+            _items['disease'] = cached[1]?.data ?? const [];
+            _savedAt = [cached[0]?.savedAt, cached[1]?.savedAt].whereType<DateTime>().firstOrNull;
+          });
+        }
+      } catch (e) {
+        debugPrint('[Queue] no saved lists: $e');
+      }
+    }
     try {
-      final results = await Future.wait([SyncService.queue('pest'), SyncService.queue('disease')]);
+      final results = await Future.wait([SyncService.fetchQueue('pest'), SyncService.fetchQueue('disease')]);
       if (!mounted) return;
       setState(() {
         _items['pest'] = results[0];
         _items['disease'] = results[1];
         _error = null;
+        _savedAt = null;
       });
     } on ApiException catch (e) {
       if (mounted) {
@@ -64,6 +87,11 @@ class _F60ValidationQueueState extends State<F60ValidationQueue> with WidgetsBin
           _offline = e.isOffline;
         });
       }
+    } catch (e) {
+      debugPrint('[Queue] could not load: $e');
+      if (mounted) setState(() => _error = 'Something went wrong. Please try again.');
+    } finally {
+      if (mounted) setState(() => _loading = false);
     }
   }
 
@@ -83,25 +111,46 @@ class _F60ValidationQueueState extends State<F60ValidationQueue> with WidgetsBin
       body: SafeArea(
         child: Column(
           children: [
-            AppHeader(title: context.tr('Validation queue'), subtitle: area),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(AppSpacing.hPad, AppSpacing.xs, AppSpacing.hPad, AppSpacing.sm),
-              child: _KindToggle(
-                value: _kind,
-                pest: _items['pest']?.length,
-                disease: _items['disease']?.length,
-                onChanged: (k) => setState(() => _kind = k),
+            AppHeader(title: context.tr('Not Validated queue'), subtitle: area),
+            MaxContentWidth(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(AppSpacing.hPad, 0, AppSpacing.hPad, AppSpacing.xs),
+                child: Text(
+                  context.tr('New observations waiting for your first review. Cases you escalate go to the '
+                      "agriculturist's To Be Validated queue."),
+                  style: const TextStyle(color: AppColors.textSecondary, fontSize: 12.5, height: 1.4),
+                ),
               ),
             ),
+            MaxContentWidth(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(AppSpacing.hPad, AppSpacing.xs, AppSpacing.hPad, AppSpacing.sm),
+                child: _KindToggle(
+                  value: _kind,
+                  pest: _items['pest']?.length,
+                  disease: _items['disease']?.length,
+                  onChanged: (k) => setState(() => _kind = k),
+                ),
+              ),
+            ),
+            if (_savedAt != null && list != null)
+              MaxContentWidth(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: AppSpacing.hPad),
+                  child: SavedDataNote(savedAt: _savedAt!, refreshing: _loading),
+                ),
+              ),
             if (_error != null && list != null)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(AppSpacing.hPad, 0, AppSpacing.hPad, AppSpacing.sm),
-                child: InfoBanner(
-                  icon: _offline ? Icons.cloud_off_rounded : Icons.error_outline_rounded,
-                  color: _offline ? AppColors.textSecondary : AppColors.danger,
-                  message: _offline ? context.tr('No signal. Showing the last list.') : context.tr(_error!),
-                  actionLabel: context.tr('Retry'),
-                  onAction: _load,
+              MaxContentWidth(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(AppSpacing.hPad, 0, AppSpacing.hPad, AppSpacing.sm),
+                  child: InfoBanner(
+                    icon: _offline ? Icons.cloud_off_rounded : Icons.error_outline_rounded,
+                    color: _offline ? AppColors.textSecondary : AppColors.danger,
+                    message: _offline ? context.tr('No signal. Showing the last list.') : context.tr(_error!),
+                    actionLabel: context.tr('Retry'),
+                    onAction: _load,
+                  ),
                 ),
               ),
             Expanded(
@@ -115,7 +164,7 @@ class _F60ValidationQueueState extends State<F60ValidationQueue> with WidgetsBin
                             AppEmptyState(
                               icon: Icons.cloud_off_rounded,
                               title: context.tr('Can\'t load the queue'),
-                              message: context.tr(_error!),
+                              message: context.tr(_offline ? 'No signal, and no list is saved on this phone yet.' : _error!),
                               actionLabel: context.tr('Try again'),
                               onAction: _load,
                               color: AppColors.danger,
@@ -140,9 +189,11 @@ class _F60ValidationQueueState extends State<F60ValidationQueue> with WidgetsBin
                                     padding: const EdgeInsets.fromLTRB(AppSpacing.hPad, AppSpacing.sm, AppSpacing.hPad, AppSpacing.xl),
                                     itemCount: list.length,
                                     separatorBuilder: (_, _) => const SizedBox(height: AppSpacing.md),
-                                    itemBuilder: (context, i) => FadeSlideIn(
-                                      index: i,
-                                      child: _QueueRow(record: list[i], onTap: () => _open(list[i])),
+                                    itemBuilder: (context, i) => MaxContentWidth(
+                                      child: FadeSlideIn(
+                                        index: i,
+                                        child: _QueueRow(record: list[i], onTap: () => _open(list[i])),
+                                      ),
                                     ),
                                   ),
                   ),
@@ -185,12 +236,16 @@ class _KindToggle extends StatelessWidget {
               children: [
                 Icon(icon, size: 18, color: selected ? AppColors.surface : AppColors.textSecondary),
                 const SizedBox(width: 6),
-                Text(label,
-                    style: TextStyle(
-                      color: selected ? AppColors.surface : AppColors.textSecondary,
-                      fontWeight: FontWeight.w800,
-                      fontSize: 14,
-                    )),
+                Flexible(
+                  child: Text(label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: selected ? AppColors.surface : AppColors.textSecondary,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 14,
+                      )),
+                ),
                 if (count != null && count > 0) ...[
                   const SizedBox(width: 6),
                   Container(
@@ -299,11 +354,37 @@ class _QueueRow extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(color: AppColors.textMuted, fontSize: 12.5),
                 ),
-                if (r.resubmissionOf != null || r.followUpOf != null) ...[
+                Text(
+                  '${context.tr('Land type')}: ${landTypeLabel(r.landType)}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: AppColors.textMuted, fontSize: 12.5),
+                ),
+                if (r.escalationReason.isNotEmpty || r.queueReason.isNotEmpty)
+                  Text(
+                    r.escalationReason.isNotEmpty
+                        ? context.tr('Reason: {reason}', {'reason': context.tr(r.escalationReason)})
+                        : context.tr(r.queueReason == 'no_technician'
+                            ? 'No technician covers this area'
+                            : r.queueReason == 'escalated'
+                                ? 'Escalated by a technician'
+                                : r.queueReason),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: AppColors.purple, fontSize: 12.5, fontWeight: FontWeight.w600),
+                  ),
+                if (r.resubmissionOf != null || r.followUpOf != null || r.possiblyUnrelated) ...[
                   const SizedBox(height: 4),
                   Wrap(
                     spacing: 6,
+                    runSpacing: 4,
                     children: [
+                      if (r.possiblyUnrelated)
+                        AppChip(
+                          label: context.tr('Possibly unrelated photo'),
+                          color: AppColors.danger,
+                          icon: Icons.image_not_supported_outlined,
+                        ),
                       if (r.resubmissionOf != null)
                         AppChip(
                           label: context.tr('Retake of #{id}', {'id': r.resubmissionOf}),

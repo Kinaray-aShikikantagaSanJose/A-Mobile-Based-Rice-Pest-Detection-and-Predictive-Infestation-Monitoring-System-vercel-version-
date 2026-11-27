@@ -153,4 +153,52 @@ const Map<String, Map<String, String>> kServerStrings = {
     'fil': 'Mukhang sobrang liwanag ang litrato; baka humingi ng bago ang technician.',
     'krj': 'Daw sobra kasanag ang litrato; basi mangayo it bag-o ang technician.',
   },
+  // Unrelated-looking photo: not the same as "no pests found".
+  'This photo may not show a rice plant or field. A technician will check it.': {
+    'fil': 'Maaaring hindi palay o bukid ang nasa litratong ito. Titingnan ito ng technician.',
+    'krj': 'Basi indi humay ukon uma ang yara sa litrato nga dya. Turukon dya it technician.',
+  },
+  'The model found insects, but its labels for this pest have not been verified yet. A technician will identify them.': {
+    'fil': 'May nakitang insekto ang model, pero hindi pa napapatunayan ang label nito para sa pesteng ito. Tutukuyin ito ng technician.',
+    'krj': 'May nakita nga insekto ang model, pero wara pa napamatud-an ang label nana para sa peste nga dya. Tukuyon dya it technician.',
+  },
+
+  // ---- reviews, land type, analytics (lib/services/sync_service.dart, lib/utils/review_rules.dart)
+  'Add a reviewer note: what you checked and why you chose this level.': {
+    'fil': 'Magdagdag ng tala ng nagsuri: ano ang sinuri mo at bakit mo pinili ang antas na ito.',
+    'krj': 'Magdugang it nota it nag-usisa: ano ang gin-usisa mo kag ham-an ginpili mo ang lebel nga dya.',
+  },
+  'The reviewer note must be your own note, not a copy of the diagnosis or guidance.': {
+    'fil': 'Dapat sarili mong tala ang tala ng nagsuri, hindi kopya ng diagnosis o gabay.',
+    'krj': 'Dapat imo kaugalingon nga nota ang nota it nag-usisa, indi kopya it diagnosis ukon giya.',
+  },
+  'Write a clear reason the farmer can act on.': {
+    'fil': 'Sumulat ng malinaw na dahilan na masusunod ng magsasaka.',
+    'krj': 'Magsulat it malinaw nga rason nga masunod it mangunguma.',
+  },
+  'Explain the escalation in a sentence the agriculturist can use.': {
+    'fil': 'Ipaliwanag ang pagpasa sa isang pangungusap na magagamit ng agriculturist.',
+    'krj': 'Ipaathag ang pagpasa sa isa ka sentensya nga magamit it agriculturist.',
+  },
+  'Recommend only approved library options for the confirmed pest.': {
+    'fil': 'Irekomenda lamang ang mga aprubadong opsyon sa library para sa nakumpirmang peste.',
+    'krj': 'Irekomendar lang ang mga aprubado nga opsyon sa library para sa nakumpirmar nga peste.',
+  },
+  'Treatment options can only be recommended for pest reports.': {
+    'fil': 'Sa mga ulat ng peste lamang maaaring magrekomenda ng mga opsyon sa lunas.',
+    'krj': 'Sa mga report it peste lang pwede magrekomendar it mga opsyon sa bulong.',
+  },
+  "The land type can't be changed after review. Ask your technician.": {
+    'fil': 'Hindi na mababago ang uri ng lupa pagkatapos ng pagsusuri. Magtanong sa iyong technician.',
+    'krj': 'Indi run mabaylo ang klase it duta pagkatapos it pag-usisa. Mamangkot sa imo technician.',
+  },
+  'Choose a date range of 2 to 366 days.': {
+    'fil': 'Pumili ng saklaw ng petsa na 2 hanggang 366 na araw.',
+    'krj': 'Magpili it sakop it petsa nga 2 hasta 366 ka adlaw.',
+  },
+  // lib/services/sync_service.dart (_PhotoMissing)
+  'The photo is no longer on this phone. Discard this observation and take it again.': {
+    'fil': 'Wala na ang litrato sa phone na ito. Itapon ang obserbasyong ito at kumuha ulit.',
+    'krj': 'Wara run ang litrato sa phone nga dya. Ipanas ang obserbasyon nga dya kag magkuha liwan.',
+  },
 };

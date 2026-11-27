@@ -137,16 +137,19 @@ RecordState recordState({required bool uploaded, required String status, require
   }
 }
 
-String recordStateLabel(RecordState s) {
+/// [staff] = technician-facing text, which names the queues: a pending
+/// observation is in the "Not Validated" queue (initial review), an
+/// escalated one in the agriculturist's "To Be Validated" queue. Farmers
+/// see friendlier words for the same states.
+String recordStateLabel(RecordState s, {bool staff = false}) {
   switch (s) {
     case RecordState.waiting:
       return tr('Waiting for signal');
     case RecordState.forValidation:
-      return tr('For technician validation');
     case RecordState.sentForReview:
-      return tr('Sent for review');
+      return tr(staff ? 'Not Validated' : 'Waiting for review');
     case RecordState.withAgriculturist:
-      return tr('With an agriculturist');
+      return tr(staff ? 'To Be Validated (agriculturist)' : 'With an agriculturist');
     case RecordState.returned:
       return tr('Please send a new photo');
     case RecordState.validated:

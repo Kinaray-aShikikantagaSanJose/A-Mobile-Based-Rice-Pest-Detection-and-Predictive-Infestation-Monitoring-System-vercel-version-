@@ -1,13 +1,13 @@
 """'What to look for': the pest and symptom guide shown in the mobile app and
-on the dashboard. This file is the only copy of the guide's content; both
-apps fetch it from GET /guide. It must match docs/model-classes-and-guide.md.
+on the dashboard. This file is the only copy of the guide's English content (translations: app/i18n_guide.py); both
+apps fetch it from GET /guide. Rules and limits: docs/MONITORING.md.
 
 Example photos live in guide_photos/<key>.jpg (or .png). A missing photo
 shows a placeholder in the apps until the group adds one.
 """
 import os
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 
 from .access import EVERYONE, require_role
@@ -171,26 +171,97 @@ def _photo_path(key: str):
     return None
 
 
-def content() -> dict:
-    """The guide, with `photo` = the photo's URL path (None when missing)."""
+CONFIRM_NOTE = "A model result is a suggestion. A technician confirms every pest, count and level."
+TRANSLATION_NOTE = "Translations are machine-assisted and have not been reviewed by an expert."
+
+# What the deployed model is (models/MODEL_SELECTION.md). Test-split figures
+# come from the training run's own held-out split; field photos differ.
+MODEL_FACTS = {
+    "architecture": "YOLO26s object detector, 640 x 640 input",
+    "file": "rice_pest_yolo26s.onnx",
+    "trained": "2026-11-25",
+    "test_split_images": 774,
+    "classes": len(CLASSES),
+    "note": "Accuracy figures were measured on photos from the training dataset. Photos taken in Antique fields "
+            "may look different, so every result is checked by a technician.",
+}
+
+GLOSSARY = [
+    ("Observation", "A photo and details sent from one field on one day."),
+    ("Not Validated", "Waiting for the first review by a technician (or an agriculturist where no technician covers the area)."),
+    ("To Be Validated", "Sent up by a technician for an agriculturist to decide (escalated)."),
+    ("Validated", "A technician or agriculturist checked the observation and confirmed the pest, count and level."),
+    ("Infestation level", "LOW, MEDIUM or HIGH, confirmed by the reviewer from the count, the crop stage and the damage seen."),
+    ("Provisional", "Not yet confirmed by an expert; may change."),
+    ("Recommendation", "An option from the approved treatment list that the reviewer suggests. It is not something you did yet."),
+    ("Treatment applied", "What you actually did in the field, and the date you did it."),
+    ("Follow-up", "A new photo of the same field after a treatment, normally 7 days later, to see how it changed."),
+    ("Hotspot", "A barangay with validated cases in the last 30 days."),
+    ("Direction of spread", "Where validated cases moved between two periods. It describes what was reported, not a forecast."),
+    ("Land type", "Upland, rainfed lowland or irrigated lowland. The 100 m elevation hint is provisional."),
+    ("Possibly unrelated photo", "The photo may not show a rice plant or field; a technician checks it. "
+                                 "It is not the same as \"no pests found\"."),
+]
+
+
+def content(lang: str = "en") -> dict:
+    """The guide in `lang`, with `photo` = the photo's URL path (None when
+    missing). `model_detected` lists what the photo model can find (the four
+    insect classes it was trained on); `observed_symptoms` lists damage that
+    only people check in the field. Older keys (pests, symptoms,
+    model_classes) are kept for older app builds."""
+    from . import i18n
+
+    L = i18n.clean(lang)
+
+    def tr(text_):
+        return i18n.t(text_, L)
+
     def photo(key):
         return f"/guide/photos/{key}" if _photo_path(key) else None
 
+    def stage_labels(stages):
+        return [tr(s) for s in stages]
+
+    pests = [
+        {**p, "name": tr(PEST_NAMES[p["key"]]), "name_en": PEST_NAMES[p["key"]],
+         "model_label": MODEL_LABELS[p["key"]], "model_class_index": CLASSES.index(p["key"]),
+         "signs": [tr(s) for s in p["signs"]], "stage_note": tr(p["stage_note"]),
+         "stage_labels": stage_labels(p["stages"]), "detected_by": "model", "photo": photo(p["key"])}
+        for p in PESTS
+    ]
+    symptoms = [
+        {**s, "name": tr(s["name"]), "name_en": s["name"], "signs": tr(s["signs"]),
+         "indicator_label": tr(s["indicator"]), "pest_name": tr(PEST_NAMES[s["pest"]]),
+         "stage_labels": stage_labels(s["stages"]), "detected_by": "people", "photo": photo(s["key"])}
+        for s in SYMPTOMS
+    ]
     return {
-        "title": "What to look for",
-        "model_note": MODEL_NOTE,
-        "pests": [
-            {**p, "name": PEST_NAMES[p["key"]], "model_label": MODEL_LABELS[p["key"]], "photo": photo(p["key"])}
-            for p in PESTS
-        ],
-        "symptoms": [{**s, "pest_name": PEST_NAMES[s["pest"]], "photo": photo(s["key"])} for s in SYMPTOMS],
-        "model_classes": [{"key": c, "name": PEST_NAMES[c], "model_label": MODEL_LABELS[c]} for c in CLASSES],
+        "title": tr("What to look for"),
+        "language": L,
+        # Not reviewed by a language expert (see app/i18n_guide.py).
+        "translation_status": "source" if L == "en" else "machine_assisted_unreviewed",
+        "translation_note": None if L == "en" else tr(TRANSLATION_NOTE),
+        "model_note": tr(MODEL_NOTE),
+        "confirm_note": tr(CONFIRM_NOTE),
+        "sections": {"model_detected": tr("Detected by the photo model"),
+                     "observed_symptoms": tr("Checked by people in the field")},
+        "model_detected": pests,
+        "observed_symptoms": symptoms,
+        "model": MODEL_FACTS,
+        "glossary": [{"term": tr(term), "term_en": term, "meaning": tr(meaning)} for term, meaning in GLOSSARY],
+        "pests": pests,
+        "symptoms": symptoms,
+        "model_classes": [{"key": c, "name": tr(PEST_NAMES[c]), "model_label": MODEL_LABELS[c]} for c in CLASSES],
     }
 
 
 @router.get("")
-def guide(user: dict = Depends(require_role(*EVERYONE))):
-    return content()
+def guide(request: Request, lang: str = "", user: dict = Depends(require_role(*EVERYONE))):
+    """The guide in ?lang= / X-Palay-Language / the account's language."""
+    from . import i18n
+
+    return content(i18n.request_language(request, user, lang))
 
 
 @router.get("/photos/{key}")

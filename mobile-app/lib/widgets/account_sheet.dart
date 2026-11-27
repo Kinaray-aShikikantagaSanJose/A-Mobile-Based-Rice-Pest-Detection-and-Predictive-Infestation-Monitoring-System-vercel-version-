@@ -4,17 +4,17 @@ import 'package:go_router/go_router.dart';
 import '../app_router.dart';
 import '../controllers/auth_controller.dart';
 import '../l10n/app_language.dart';
-import '../services/auth_service.dart';
 import '../services/local_store.dart';
 import '../services/sync_service.dart';
 import '../theme.dart';
 import 'app_widgets.dart';
 import 'brand.dart';
-import 'language_button.dart';
 import 'user_avatar.dart';
 
 /// The user's profile picture (or initials) that opens the account sheet
 /// (who is signed in, edit profile, send waiting observations, sign out).
+/// The language is changed with the button on Home or in the profile, so
+/// the sheet has no language control of its own.
 /// [onDark] styles it for the gradient hero header.
 class AccountButton extends StatelessWidget {
   final bool onDark;
@@ -64,7 +64,8 @@ class _AccountSheetState extends State<_AccountSheet> {
 
   Future<void> _syncNow() async {
     setState(() => _syncing = true);
-    await SyncService.syncAll();
+    // The person asked: also retry items the server refused before.
+    await SyncService.syncAll(retryRefused: true);
     final waiting = await LocalStore.instance.hasPendingWork();
     if (!mounted) return;
     setState(() {
@@ -73,29 +74,11 @@ class _AccountSheetState extends State<_AccountSheet> {
     });
   }
 
+  /// Always asks first, with what is still on this phone; closes the sheet
+  /// and ends the session (on the server too, best effort) when confirmed.
   Future<void> _signOut() async {
-    if (await LocalStore.instance.hasPendingWork() && mounted) {
-      final leave = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: Text(ctx.tr('Some work has not been sent')),
-          content: Text(ctx.tr(
-            'You have observations or treatments that are still on this phone. '
-            'They are sent when you sign in again with this account. '
-            'If a different account signs in on this phone, they are deleted.',
-          )),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(ctx.tr('Stay signed in'))),
-            TextButton(onPressed: () => Navigator.pop(ctx, true), child: Text(ctx.tr('Sign out'))),
-          ],
-        ),
-      );
-      if (leave != true) return;
-    }
-    if (!mounted) return;
-    Navigator.of(context).pop();
-    // Ends the session on the server too (best effort; works without signal).
-    await AuthService.instance.signOut();
+    final navigator = Navigator.of(context);
+    await confirmAndSignOut(context, beforeSignOut: () => navigator.pop());
   }
 
   @override
@@ -166,22 +149,6 @@ class _AccountSheetState extends State<_AccountSheet> {
                       loading: _syncing,
                       onPressed: _syncNow,
                     ),
-                ],
-              ),
-            ),
-            const SizedBox(height: AppSpacing.lg),
-            AppCard(
-              child: Row(
-                children: [
-                  const IconTile(icon: Icons.translate_rounded, color: AppColors.sky, size: 40),
-                  const SizedBox(width: AppSpacing.md),
-                  Expanded(
-                    child: Text(
-                      '${context.tr('Language')}: ${context.lang.label}',
-                      style: const TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                  ),
-                  const LanguageButton(),
                 ],
               ),
             ),

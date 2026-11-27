@@ -443,7 +443,7 @@ class AiResultCard extends StatelessWidget {
   static Color _confidenceColor(double c) => c >= 0.7 ? AppColors.primary : (c >= 0.45 ? AppColors.orange : AppColors.danger);
 }
 
-/// "For technician validation": the model result is a suggestion, not final.
+/// "Waiting for review": the model result is a suggestion, not final.
 class _ValidationBadge extends StatelessWidget {
   const _ValidationBadge();
 
@@ -460,7 +460,7 @@ class _ValidationBadge extends StatelessWidget {
           children: [
             const Icon(Icons.hourglass_top_rounded, size: 16, color: AppColors.orange),
             const SizedBox(width: 6),
-            Text(context.tr('For technician validation'),
+            Text(context.tr('Waiting for review'),
                 style: const TextStyle(color: AppColors.orange, fontWeight: FontWeight.bold, fontSize: 13.5)),
           ],
         ),

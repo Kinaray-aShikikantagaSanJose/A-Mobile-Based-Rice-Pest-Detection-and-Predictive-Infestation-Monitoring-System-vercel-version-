@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import { api } from '../api.js';
 import { useLevelSuggestion } from '../components/ReviewForm.jsx';
-import { Badge, Button, Empty, ErrorNote, Field, LEVEL_COLOR, LevelBadge, Loading, Notice, Panel, PageHeader, Select } from '../components/ui.jsx';
+import { Badge, Button, Empty, ErrorNote, Field, LEVEL_COLOR, LevelBadge, Loading, Notice, Panel, PageHeader, Select, useConfirm } from '../components/ui.jsx';
 import { useT } from '../i18n/index.jsx';
 import { CROP_STAGES, fmtDate, fmtNum, PEST_OPTIONS, useAction, useAsync } from '../lib.js';
 
-const isPlaceholder = (row) => row.updated_by === 'placeholder';
+// Every threshold is provisional until an agriculturist confirms it against a
+// source; editing the numbers makes it provisional again (server rule).
+const isProvisional = (row) => row.provisional !== false;
 const stageLabel = (s) => s || 'Any stage';
 
 /** LOW | MEDIUM | HIGH count ranges drawn to scale. */
@@ -88,11 +90,58 @@ function ThresholdEditor({ pest, stage, stageOptions, initial, onSaved, onCancel
   );
 }
 
+/** Agriculturists: mark a row as checked against a source (or provisional again). */
+function ConfirmSource({ row, onSaved }) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const [source, setSource] = useState(row.source_reference || '');
+  const action = useAction();
+  if (!isProvisional(row)) {
+    return (
+      <Button size="sm" variant="ghost" busy={action.busy}
+        onClick={() => action.run(async () => {
+          await api.confirmCriteria(row.id, row.source_reference || 'marked provisional again', false);
+          onSaved(t('Thresholds marked provisional again.'));
+        })}>
+        {t('Mark provisional')}
+      </Button>
+    );
+  }
+  if (!open) {
+    return <Button size="sm" variant="secondary" onClick={() => setOpen(true)}>{t('Confirm with a source')}</Button>;
+  }
+  return (
+    <div className="w-full space-y-2">
+      <Field label={t('Source you checked these numbers against *')} hint={t('e.g. the title and year of the guide or memo your office uses.')}>
+        <input className="input" value={source} maxLength={500} onChange={(e) => setSource(e.target.value)} />
+      </Field>
+      <ErrorNote message={action.error} />
+      <div className="flex gap-2">
+        <Button size="sm" busy={action.busy} disabled={source.trim().length < 5}
+          onClick={() => action.run(async () => {
+            await api.confirmCriteria(row.id, source.trim(), true);
+            onSaved(t('Thresholds confirmed.'));
+          })}>
+          {t('Confirm')}
+        </Button>
+        <Button size="sm" variant="secondary" onClick={() => setOpen(false)}>{t('Cancel')}</Button>
+      </div>
+    </div>
+  );
+}
+
 function ThresholdRow({ row, canEdit, editing, onEdit, onCancel, onSaved }) {
   const t = useT();
   const action = useAction();
-  const remove = () => {
-    if (!window.confirm(t('Remove the {stage} thresholds? That stage will use the any-stage thresholds again.', { stage: t(row.crop_stage) }))) return;
+  const [confirm, dialog] = useConfirm();
+  const remove = async () => {
+    const ok = await confirm({
+      title: t('Remove these thresholds?'),
+      message: t('Remove the {stage} thresholds? That stage will use the any-stage thresholds again.', { stage: t(row.crop_stage) }),
+      confirmLabel: t('Remove'),
+      danger: true,
+    });
+    if (!ok) return;
     action.run(async () => {
       await api.deleteCriteria(row.id);
       onSaved(t('{stage} thresholds removed.', { stage: t(row.crop_stage) }));
@@ -106,7 +155,7 @@ function ThresholdRow({ row, canEdit, editing, onEdit, onCancel, onSaved }) {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-semibold text-ink">{t(stageLabel(row.crop_stage))}</span>
-          {isPlaceholder(row) && <Badge tone="orange">{t('Placeholder')}</Badge>}
+          {isProvisional(row) ? <Badge tone="orange">{t('Provisional')}</Badge> : <Badge tone="green">{t('Confirmed')}</Badge>}
         </div>
         {canEdit && (
           <div className="flex gap-2">
@@ -123,9 +172,18 @@ function ThresholdRow({ row, canEdit, editing, onEdit, onCancel, onSaved }) {
       </div>
       <Scale medium={row.medium_from} high={row.high_from} />
       <div className="text-xs text-muted">
-        {isPlaceholder(row) ? t('Seeded placeholder value') : t('Updated by {name} · {date}', { name: row.updated_by || '—', date: fmtDate(row.updated_at) })}
+        {t('Updated by {name} · {date}', { name: row.updated_by || '—', date: fmtDate(row.updated_at) })}
+        {!isProvisional(row) && (
+          <span className="block">
+            {t('Confirmed by {name} · {date} · source: {source}', {
+              name: row.confirmed_by || '—', date: fmtDate(row.confirmed_at), source: row.source_reference || '—',
+            })}
+          </span>
+        )}
       </div>
+      {canEdit && <div className="flex flex-wrap gap-2"><ConfirmSource row={row} onSaved={onSaved} /></div>}
       <ErrorNote message={action.error} />
+      {dialog}
     </div>
   );
 }
@@ -290,7 +348,7 @@ export default function CriteriaPage({ viewer }) {
   const res = useAsync(() => api.criteria(), []);
   const [notice, setNotice] = useState('');
   const pests = res.data || [];
-  const placeholders = pests.flatMap((c) => c.thresholds.filter(isPlaceholder).map(() => c.pest_name));
+  const placeholders = pests.flatMap((c) => c.thresholds.filter(isProvisional).map(() => c.pest_name));
 
   const saved = (message) => {
     setNotice(message);
@@ -308,11 +366,11 @@ export default function CriteriaPage({ viewer }) {
       {placeholders.length > 0 && (
         <div className="mb-4">
           <Notice tone="orange">
-            <b>{t('Placeholder thresholds in use')}</b>{' '}
-            {t("for {pests}. These were seeded with the system and aren't from an agronomic reference.", { pests: [...new Set(placeholders)].join(', ') })}{' '}
+            <b>{t('Provisional thresholds in use')}</b>{' '}
+            {t('for {pests}. They have not been confirmed against an agronomic reference by an agriculturist, so suggested levels are provisional.', { pests: [...new Set(placeholders)].map((p) => t(p)).join(', ') })}{' '}
             {canEdit
-              ? t('Set the real values from your reference (e.g. the economic thresholds your office uses) so the suggestions are meaningful.')
-              : t('An agriculturist still needs to set the real values. Rely on what you see in the field when confirming a level.')}
+              ? t('Check each row against the reference your office uses, then confirm it with that source.')
+              : t('An agriculturist still needs to confirm them. Rely on what you see in the field when confirming a level.')}
           </Notice>
         </div>
       )}

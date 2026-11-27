@@ -26,6 +26,10 @@ class _F25NotificationsState extends State<F25Notifications> {
   List<AppNotification>? _items;
   String? _error;
   bool _offline = false;
+  bool _loading = false;
+
+  /// When the list shown was saved on the phone (null = fresh).
+  DateTime? _savedAt;
 
   @override
   void initState() {
@@ -33,29 +37,54 @@ class _F25NotificationsState extends State<F25Notifications> {
     _load();
   }
 
+  /// Cache first: the last saved list shows at once, then the server's.
   Future<void> _load() async {
+    if (mounted) setState(() => _loading = true);
     try {
       final followUps = await SyncService.dueFollowUps();
       if (mounted) setState(() => _followUps = followUps);
     } catch (e) {
       debugPrint('[Notifications] follow-ups unavailable: $e');
     }
+    if (_items == null) {
+      try {
+        final cached = await SyncService.cachedNotifications();
+        if (cached != null && mounted && _items == null) {
+          setState(() {
+            _items = cached.data;
+            _savedAt = cached.savedAt;
+          });
+        }
+      } catch (e) {
+        debugPrint('[Notifications] no saved list: $e');
+      }
+    }
     try {
-      final items = await SyncService.notifications();
+      final items = await SyncService.fetchNotifications();
       if (mounted) {
         setState(() {
           _items = items;
           _error = null;
           _offline = false;
+          _savedAt = null;
         });
       }
     } on ApiException catch (e) {
       if (mounted) {
         setState(() {
           _offline = e.isOffline;
-          _error = e.isOffline ? 'No signal. Showing follow-ups saved on your phone.' : e.message;
+          _error = e.isOffline
+              ? (_items == null
+                  ? 'No signal, and no notifications are saved on this phone yet.'
+                  : 'No signal. Showing the notifications saved on this phone.')
+              : e.message;
         });
       }
+    } catch (e) {
+      debugPrint('[Notifications] could not load: $e');
+      if (mounted) setState(() => _error = 'Something went wrong. Please try again.');
+    } finally {
+      if (mounted) setState(() => _loading = false);
     }
   }
 
@@ -132,7 +161,12 @@ class _F25NotificationsState extends State<F25Notifications> {
                 child: ListView(
                   padding: const EdgeInsets.fromLTRB(AppSpacing.hPad, AppSpacing.sm, AppSpacing.hPad, AppSpacing.xl),
                   children: [
-                    if (_error != null) ...[
+                    MaxContentWidth(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                    if (_savedAt != null && items != null) SavedDataNote(savedAt: _savedAt!, refreshing: _loading),
+                    if (_error != null && items != null) ...[
                       InfoBanner(
                         icon: _offline ? Icons.cloud_off_rounded : Icons.error_outline_rounded,
                         color: _offline ? AppColors.textSecondary : AppColors.danger,
@@ -183,14 +217,24 @@ class _F25NotificationsState extends State<F25Notifications> {
                     ],
                     if (items == null && _error == null)
                       const SkeletonList(rows: 4)
-                    else if ((items ?? const []).isEmpty && _followUps.isEmpty)
+                    else if (items == null && _followUps.isEmpty)
+                      LoadErrorState(message: _error!, onRetry: _load)
+                    else if (items == null)
+                      InfoBanner(
+                        icon: Icons.cloud_off_rounded,
+                        color: AppColors.textSecondary,
+                        message: context.tr(_error!),
+                        actionLabel: context.tr('Retry'),
+                        onAction: _load,
+                      )
+                    else if (items.isEmpty && _followUps.isEmpty)
                       AppEmptyState(
                         icon: Icons.notifications_none_rounded,
                         title: context.tr('You\'re all caught up'),
                         message: context.tr('You will be told here when a technician reviews your observations.'),
                       )
                     else
-                      for (final (i, n) in (items ?? const <AppNotification>[]).indexed) ...[
+                      for (final (i, n) in items.indexed) ...[
                         FadeSlideIn(
                           index: i,
                           child: AppCard(
@@ -233,6 +277,9 @@ class _F25NotificationsState extends State<F25Notifications> {
                         ),
                         const SizedBox(height: AppSpacing.md),
                       ],
+                        ],
+                      ),
+                    ),
                   ],
                 ),
               ),

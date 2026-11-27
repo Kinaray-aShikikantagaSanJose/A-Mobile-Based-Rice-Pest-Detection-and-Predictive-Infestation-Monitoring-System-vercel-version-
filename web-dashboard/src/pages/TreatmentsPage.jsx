@@ -1,19 +1,22 @@
 import { useState } from 'react';
 import { api } from '../api.js';
 import RecordDrawer from '../components/RecordDrawer.jsx';
-import { Badge, Button, Empty, ErrorNote, LevelBadge, Loading, OutcomeBadge, Panel, PageHeader, Segmented, Stat, Table } from '../components/ui.jsx';
+import { Badge, Button, Empty, ErrorNote, LevelBadge, Loading, OutcomeBadge, Pager, Panel, PageHeader, Segmented, Stat, Table } from '../components/ui.jsx';
 import { useT } from '../i18n/index.jsx';
 import { daysSince, fmtDate, fmtNum, useAction, useAsync } from '../lib.js';
 
+// Outcomes are only classified when both observations were reviewed and show
+// the same pest; anything else stays pending or "not comparable".
 const OUTCOME_FILTERS = [
   ['all', 'All'],
   ['improved', 'Improved'],
   ['no change', 'No change'],
-  ['worse', 'Worse'],
-  ['awaiting follow-up', 'Awaiting'],
+  ['worsened', 'Worsened'],
+  ['not comparable', 'Not comparable'],
+  ['pending', 'Pending'],
   ['overdue', 'Overdue'],
-  ['follow-up in review', 'In review'],
 ];
+const PAGE = 50;
 
 function Change({ pct }) {
   if (pct === null || pct === undefined) return <span className="text-muted">—</span>;
@@ -26,21 +29,31 @@ function Change({ pct }) {
   );
 }
 
-/** Before → after: level and count of the treated observation vs. its follow-up. */
+/** Before → after: date, level and count of the treated observation vs. its follow-up. */
 function BeforeAfter({ i }) {
   const t = useT();
   const count = (n) => (n === null || n === undefined ? t('n/c') : fmtNum(n));
   return (
-    <div className="flex items-center gap-2 whitespace-nowrap text-sm">
-      <span className="flex items-center gap-1">
-        <LevelBadge level={i.before_level} />
-        <span className="text-xs text-ink2">{count(i.before_count)}</span>
+    <div className="flex items-start gap-2 whitespace-nowrap text-sm">
+      <span>
+        <span className="flex items-center gap-1">
+          <LevelBadge level={i.before_level} />
+          <span className="text-xs text-ink2">{count(i.before_count)}</span>
+        </span>
+        <span className="block text-[11px] text-muted">{fmtDate(i.before_at)}</span>
       </span>
       <span className="text-muted">→</span>
       {i.after_level || i.after_count != null ? (
-        <span className="flex items-center gap-1">
-          <LevelBadge level={i.after_level} />
-          <span className="text-xs text-ink2">{count(i.after_count)}</span>
+        <span>
+          <span className="flex items-center gap-1">
+            <LevelBadge level={i.after_level} />
+            <span className="text-xs text-ink2">{count(i.after_count)}</span>
+          </span>
+          <span className="block text-[11px] text-muted">{fmtDate(i.follow_up_at)}</span>
+        </span>
+      ) : i.follow_up_scan_id ? (
+        <span className="text-xs text-muted">
+          {i.follow_up_status === 'no_pests' ? t('no pests detected, not reviewed') : t('follow-up not reviewed yet')}
         </span>
       ) : (
         <span className="text-xs text-muted">{t('no follow-up yet')}</span>
@@ -54,19 +67,19 @@ function OutcomeSplit({ g }) {
   const parts = [
     ['improved', g.improved, 'bg-emerald-500'],
     ['no change', g.no_change, 'bg-gray-300'],
-    ['worse', g.worse, 'bg-red-500'],
+    ['worsened', g.worsened ?? g.worse, 'bg-red-500'],
   ];
   if (!g.compared) return <span className="text-xs text-muted">{t('No follow-ups compared yet')}</span>;
   return (
     <div className="flex items-center gap-3">
       <div
         className="flex h-2.5 w-32 overflow-hidden rounded-full bg-gray-100"
-        title={t('{improved} improved · {same} no change · {worse} worse', { improved: g.improved, same: g.no_change, worse: g.worse })}
+        title={t('{improved} improved · {same} no change · {worse} worsened', { improved: g.improved, same: g.no_change, worse: g.worsened ?? g.worse })}
       >
         {parts.map(([k, v, cls]) => (v ? <div key={k} className={cls} style={{ width: `${(v / g.compared) * 100}%` }} /> : null))}
       </div>
       <span className="whitespace-nowrap text-xs tabular-nums text-ink2">
-        {g.improved} / {g.no_change} / {g.worse}
+        {g.improved} / {g.no_change} / {g.worsened ?? g.worse}
       </span>
     </div>
   );
@@ -220,19 +233,25 @@ function OverduePanel({ items, onOpen, prominent }) {
 export default function TreatmentsPage({ viewer }) {
   const t = useT();
   const isAgri = viewer.role === 'agriculturist';
-  const res = useAsync(() => api.treatments(), []);
   const [show, setShow] = useState('all');
+  const [offset, setOffset] = useState(0);
   const [openId, setOpenId] = useState(null);
+  // Paged on the server; the summary and overdue list always cover everything.
+  const res = useAsync(
+    () => api.treatments({ outcome: show === 'all' ? '' : show, limit: PAGE, offset }),
+    [show, offset],
+  );
   const d = res.data;
-  const items = d?.items || [];
-  const shownItems = show === 'all' ? items : items.filter((i) => i.outcome === show);
-  const count = (o) => items.filter((i) => i.outcome === o).length;
-  const compared = count('improved') + count('no change') + count('worse');
+  const shownItems = d?.items || [];
+  const sum = (key) => (d?.summary || []).reduce((n, g) => n + (g[key] || 0), 0);
+  const logged = sum('applications');
+  const compared = sum('compared');
+  const improved = sum('improved');
 
   const summary = d && (
     <Panel
       title={t('By treatment')}
-      subtitle={t('Applications with the same name are grouped. Improved / no change / worse counts only treatments whose follow-up was validated.')}
+      subtitle={t('Applications with the same name are grouped. Improved / no change / worsened counts only treatments whose follow-up was reviewed and shows the same pest. A follow-up photo with no pests detected is not counted as improved until a technician reviews it.')}
       bodyClassName=""
     >
       <Table
@@ -244,7 +263,8 @@ export default function TreatmentsPage({ viewer }) {
           { key: 'option_type', label: t('Type'), render: (g) => <Badge tone="gray">{t(g.option_type)}</Badge> },
           { key: 'applications', label: t('Applications'), align: 'right', render: (g) => fmtNum(g.applications) },
           { key: 'compared', label: t('Compared'), align: 'right', render: (g) => fmtNum(g.compared) },
-          { key: 'split', label: t('Improved / no change / worse'), render: (g) => <OutcomeSplit g={g} /> },
+          { key: 'split', label: t('Improved / no change / worsened'), render: (g) => <OutcomeSplit g={g} /> },
+          { key: 'not_comparable', label: t('Not comparable'), align: 'right', render: (g) => fmtNum(g.not_comparable || 0) },
         ]}
       />
     </Panel>
@@ -272,17 +292,17 @@ export default function TreatmentsPage({ viewer }) {
           {!isAgri && <OverduePanel items={d.overdue} onOpen={setOpenId} prominent />}
 
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <Stat label={t('Treatments logged')} value={fmtNum(items.length)} />
+            <Stat label={t('Treatments logged')} value={fmtNum(logged)} />
             <Stat
               label={t('Follow-ups compared')}
               value={fmtNum(compared)}
-              hint={t('{n} awaiting or in review', { n: fmtNum(count('awaiting follow-up') + count('follow-up in review')) })}
+              hint={t('{n} still pending', { n: fmtNum(sum('pending')) })}
             />
             <Stat
               label={t('Improved')}
-              value={fmtNum(count('improved'))}
+              value={fmtNum(improved)}
               tone="green"
-              hint={compared ? t('{pct}% of compared', { pct: Math.round((count('improved') / compared) * 100) }) : undefined}
+              hint={compared ? t('{pct}% of compared', { pct: Math.round((improved / compared) * 100) }) : undefined}
             />
             <Stat label={t('Follow-ups overdue')} value={fmtNum(d.overdue.length)} tone={d.overdue.length ? 'orange' : 'muted'} />
           </div>
@@ -292,7 +312,16 @@ export default function TreatmentsPage({ viewer }) {
           <Panel
             title={t('Interventions and follow-ups')}
             subtitle={t('Click a row to open the treated observation.')}
-            actions={<Segmented value={show} onChange={setShow} options={OUTCOME_FILTERS.map(([v, label]) => [v, t(label)])} />}
+            actions={
+              <Segmented
+                value={show}
+                onChange={(v) => {
+                  setOffset(0);
+                  setShow(v);
+                }}
+                options={OUTCOME_FILTERS.map(([v, label]) => [v, t(label)])}
+              />
+            }
             bodyClassName=""
           >
             <Table
@@ -326,8 +355,9 @@ export default function TreatmentsPage({ viewer }) {
                   render: (i) => (
                     <div className="max-w-[240px]">
                       <div className="line-clamp-2">{i.treatment}</div>
+                      {i.was_recommended && <Badge tone="green">{t('Recommended by the reviewer')}</Badge>}
                       <div className="text-xs text-ink2">
-                        {i.pest}
+                        {t(i.pest)}
                         {i.crop_stage && ` · ${t(i.crop_stage)}`} · {t(i.option_type)}
                       </div>
                     </div>
@@ -357,9 +387,19 @@ export default function TreatmentsPage({ viewer }) {
                       <FeedbackControls i={i} onSaved={res.reload} />
                     ),
                 },
-                { key: 'outcome', label: t('Outcome'), render: (i) => <OutcomeBadge outcome={i.outcome} /> },
+                {
+                  key: 'outcome',
+                  label: t('Outcome'),
+                  render: (i) => (
+                    <div>
+                      <OutcomeBadge outcome={i.outcome} />
+                      {i.outcome_basis && <div className="mt-0.5 max-w-[180px] text-[11px] text-muted">{t(i.outcome_basis)}</div>}
+                    </div>
+                  ),
+                },
               ]}
             />
+            <Pager total={d.total ?? shownItems.length} limit={PAGE} offset={offset} onChange={setOffset} loading={res.loading} />
           </Panel>
 
           {isAgri ? <OverduePanel items={d.overdue} onOpen={setOpenId} /> : summary}

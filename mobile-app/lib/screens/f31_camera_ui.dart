@@ -541,6 +541,34 @@ class F31CameraUiState extends State<F31CameraUi>
     _restoreFlash();
   }
 
+  /// "Discard photo" (and leaving the camera with an unused photo) asks
+  /// first, since the photo is deleted.
+  Future<bool> _confirmDiscard() => confirmAction(
+        context,
+        title: context.tr('Discard this photo?'),
+        message: context.tr('The photo will be deleted from this phone.'),
+        confirmLabel: context.tr('Discard'),
+        cancelLabel: context.tr('Keep it'),
+        icon: Icons.delete_outline_rounded,
+        color: AppColors.danger,
+      );
+
+  /// Back pressed with an unused photo: delete it (after asking) and leave.
+  Future<void> _leaveAfterDiscard() async {
+    if (!await _confirmDiscard() || !mounted) return;
+    setState(_discardCaptured);
+    if (context.canPop()) {
+      context.pop();
+    } else {
+      context.go(AppRouter.observe);
+    }
+  }
+
+  Future<void> _askDiscard() async {
+    if (_capturedImagePath == null) return;
+    if (await _confirmDiscard() && mounted) _resetCapture();
+  }
+
   /// Hands the photo back to the observation flow (the file is kept).
   void _confirmCapture() {
     final path = _capturedImagePath;
@@ -560,10 +588,16 @@ class F31CameraUiState extends State<F31CameraUi>
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle.light,
       child: PopScope(
-        // Leaving the camera discards a photo that was never confirmed. While
-        // the photo is handed to the next screens it is theirs, never deleted here.
+        // Leaving the camera discards a photo that was never confirmed (after
+        // asking). While the photo is handed to the next screens it is
+        // theirs, never deleted here.
+        canPop: _capturedImagePath == null || _isNavigating,
         onPopInvokedWithResult: (didPop, _) {
-          if (didPop && !_isNavigating) _discardCaptured();
+          if (didPop) {
+            if (!_isNavigating) _discardCaptured();
+            return;
+          }
+          _leaveAfterDiscard();
         },
         child: Scaffold(
           backgroundColor: Colors.black,
@@ -986,7 +1020,7 @@ class F31CameraUiState extends State<F31CameraUi>
               _GlassIconButton(
                 icon: Icons.close,
                 tooltip: context.tr('Discard photo'),
-                onTap: _resetCapture,
+                onTap: _askDiscard,
               ),
             ],
           ),

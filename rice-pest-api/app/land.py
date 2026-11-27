@@ -1,6 +1,6 @@
 """Land type of the field where an observation was taken.
 
-Definitions (see docs/land-type-definition.md; to be confirmed by the
+Definitions (see docs/MONITORING.md section 9; to be confirmed by the
 agriculturist, who may change the elevation cut-off below):
 
   upland            - rice on sloping or high ground with naturally drained
@@ -31,7 +31,7 @@ LAND_TYPE_LABELS = {
 NOT_RECORDED = "Not recorded"
 
 # Fields at or above this elevation (metres above sea level) are suggested as
-# upland. Placeholder until the agriculturist confirms it.
+# upland. PROVISIONAL until an agriculturist confirms it (docs/MONITORING.md).
 UPLAND_MIN_ELEVATION_M = float(os.getenv("UPLAND_MIN_ELEVATION_M", "100"))
 
 # Free elevation service (Copernicus 90 m DEM), no API key.

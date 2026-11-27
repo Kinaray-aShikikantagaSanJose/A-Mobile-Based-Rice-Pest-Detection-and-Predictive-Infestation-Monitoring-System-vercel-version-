@@ -152,7 +152,12 @@ class _F14WaitingApprovalState extends State<F14WaitingApproval> with WidgetsBin
               Text(context.tr(_message!), textAlign: TextAlign.center, style: const TextStyle(color: AppColors.textSecondary)),
             ],
             const SizedBox(height: AppSpacing.md),
-            AppSecondaryButton(label: context.tr('Sign out'), icon: Icons.logout_rounded, onPressed: auth.logout),
+            // Same confirmation as the account sheet; also ends the session on the server.
+            AppSecondaryButton(
+              label: context.tr('Sign out'),
+              icon: Icons.logout_rounded,
+              onPressed: () => confirmAndSignOut(context),
+            ),
           ],
         ),
       ),

@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../controllers/auth_controller.dart';
+import '../l10n/app_language.dart';
 import '../platform/local_files.dart';
 import '../utils/api_config.dart';
 
@@ -67,6 +68,8 @@ class ApiClient {
   /// Profile requests work for accounts still waiting for approval too.
   static Future<dynamic> put(String path, [Object? body]) => _send('PUT', path, body: body, allowUnapproved: true);
 
+  static Future<dynamic> patch(String path, [Object? body]) => _send('PATCH', path, body: body);
+
   static Future<dynamic> delete(String path, {Map<String, String>? query}) =>
       _send('DELETE', path, query: query, allowUnapproved: true);
 
@@ -116,8 +119,13 @@ class ApiClient {
     }
   }
 
-  /// Which app sent the request (shown in the dashboard's activity log).
-  static Map<String, String> get clientHeaders => {'X-Palay-Client': kIsWeb ? 'web' : 'mobile'};
+  /// Which app sent the request (shown in the dashboard's activity log) and
+  /// the language chosen in the app, so server texts (guide, level reasons,
+  /// messages) come back in that language.
+  static Map<String, String> get clientHeaders => {
+        'X-Palay-Client': kIsWeb ? 'web' : 'mobile',
+        'X-Palay-Language': AppLanguage.instance.code,
+      };
 
   /// Headers for requests the app builds itself (e.g. Image.network).
   static Future<Map<String, String>> authHeaders() async =>
@@ -196,6 +204,7 @@ class ApiClient {
         res = await switch (method) {
           'GET' => http.get(uri, headers: headers),
           'PUT' => http.put(uri, headers: headers, body: encoded),
+          'PATCH' => http.patch(uri, headers: headers, body: encoded),
           'DELETE' => http.delete(uri, headers: headers),
           _ => http.post(uri, headers: headers, body: encoded),
         }

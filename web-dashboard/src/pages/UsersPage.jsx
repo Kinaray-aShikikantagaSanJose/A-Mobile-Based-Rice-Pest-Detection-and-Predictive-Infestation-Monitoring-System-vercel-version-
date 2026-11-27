@@ -2,9 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
 import Avatar from '../components/Avatar.jsx';
 import Icon from '../components/icons.jsx';
-import { Badge, Button, ChipsInput, Drawer, Empty, ErrorNote, Field, Loading, Notice, Panel, PageHeader, Segmented, Select } from '../components/ui.jsx';
+import { Badge, Button, ChipsInput, Drawer, Empty, ErrorNote, Field, Loading, Notice, Pager, Panel, PageHeader, Segmented, Select, useConfirm } from '../components/ui.jsx';
 import { useT } from '../i18n/index.jsx';
-import { fmtDate, fmtNum, MUNICIPALITIES, ROLE_LABELS, useAction, useAsync } from '../lib.js';
+import { fmtDate, fmtNum, MUNICIPALITIES, ROLE_LABELS, useAction, useAsync, useDebounced } from '../lib.js';
 
 const ROLE_TONE = { farmer: 'gray', technician: 'blue', agriculturist: 'purple' };
 const STATUS_LABELS = { pending: 'Pending', approved: 'Approved', rejected: 'Rejected' };
@@ -56,8 +56,15 @@ function ApprovalRow({ u, barangaysOf, onDone }) {
       await api.updateUser(u.id, body);
       onDone(t('{name} approved as {role}.', { name: u.full_name, role: t(ROLE_LABELS[role]).toLowerCase() }));
     });
-  const reject = () => {
-    if (!window.confirm(t("Reject {name}'s account? They won't be able to use the app or dashboard.", { name: u.full_name }))) return;
+  const [confirm, dialog] = useConfirm();
+  const reject = async () => {
+    const ok = await confirm({
+      title: t('Reject this account?'),
+      message: t("Reject {name}'s account? They won't be able to use the app or dashboard.", { name: u.full_name }),
+      confirmLabel: t('Reject'),
+      danger: true,
+    });
+    if (!ok) return;
     action.run(async () => {
       await api.updateUser(u.id, { status: 'rejected' });
       onDone(t("{name}'s account was rejected.", { name: u.full_name }));
@@ -109,6 +116,7 @@ function ApprovalRow({ u, barangaysOf, onDone }) {
           <ErrorNote message={action.error} />
         </div>
       )}
+      {dialog}
     </li>
   );
 }
@@ -484,22 +492,28 @@ function UserRow({ u, onEdit, onDelete }) {
   );
 }
 
-function AccountsTable({ users, barangaysOf, onSaved }) {
+const USERS_PAGE = 50;
+
+/** Accounts, filtered and paged on the server (same order on every page). */
+function AccountsTable({ users, barangaysOf, onSaved, version }) {
   const t = useT();
   const [search, setSearch] = useState('');
   const [role, setRole] = useState('');
   const [status, setStatus] = useState('');
   const [muni, setMuni] = useState('');
+  const [offset, setOffset] = useState(0);
   const [editing, setEditing] = useState(null); // null | 'new' | user
   const [deleting, setDeleting] = useState(null);
-  const s = search.trim().toLowerCase();
-  const shown = users.filter(
-    (u) =>
-      (!role || u.role === role) &&
-      (!status || u.status === status) &&
-      (!muni || u.municipality === muni) &&
-      (!s || `${u.full_name} ${u.email} ${u.phone} ${u.barangay}`.toLowerCase().includes(s)),
+  const q = useDebounced(search);
+  const page = useAsync(
+    () => api.usersPage({ q, role, status, municipality: muni, limit: USERS_PAGE, offset }),
+    [q, role, status, muni, offset, version],
   );
+  const shown = page.data?.items || [];
+  const filterBy = (setter) => (value) => {
+    setOffset(0);
+    setter(value);
+  };
   const counts = users.reduce((acc, u) => ({ ...acc, [u.role]: (acc[u.role] || 0) + 1 }), {});
   const done = (message) => {
     setEditing(null);
@@ -510,16 +524,16 @@ function AccountsTable({ users, barangaysOf, onSaved }) {
     <Panel bodyClassName="">
       <div className="grid gap-3 border-b border-line p-5 md:grid-cols-[1fr_180px_160px_200px_auto] md:items-end">
         <Field label={t('Search')}>
-          <input className="input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('Name, email, phone, barangay…')} />
+          <input className="input" value={search} onChange={(e) => filterBy(setSearch)(e.target.value)} placeholder={t('Name, email, barangay…')} />
         </Field>
         <Field label={t('Role')}>
-          <Select value={role} onChange={setRole} placeholder={t('All roles')} options={ROLE_OPTIONS.map(([v, l]) => [v, `${t(l)} (${counts[v] || 0})`])} />
+          <Select value={role} onChange={filterBy(setRole)} placeholder={t('All roles')} options={ROLE_OPTIONS.map(([v, l]) => [v, `${t(l)} (${counts[v] || 0})`])} />
         </Field>
         <Field label={t('Status')}>
-          <Select value={status} onChange={setStatus} placeholder={t('All')} options={Object.entries(STATUS_LABELS).map(([v, l]) => [v, t(l)])} />
+          <Select value={status} onChange={filterBy(setStatus)} placeholder={t('All')} options={Object.entries(STATUS_LABELS).map(([v, l]) => [v, t(l)])} />
         </Field>
         <Field label={t('Municipality')}>
-          <Select value={muni} onChange={setMuni} placeholder={t('All')} options={[...new Set(users.map((u) => u.municipality).filter(Boolean))].sort()} />
+          <Select value={muni} onChange={filterBy(setMuni)} placeholder={t('All')} options={[...new Set(users.map((u) => u.municipality).filter(Boolean))].sort()} />
         </Field>
         <Button size="lg" onClick={() => setEditing('new')}>
           <Icon name="userPlus" className="h-4 w-4" />
@@ -543,8 +557,11 @@ function AccountsTable({ users, barangaysOf, onSaved }) {
             ))}
           </tbody>
         </table>
-        {!shown.length && <Empty title={t('No accounts match')} />}
+        <ErrorNote message={page.error} onRetry={page.reload} />
+        {!page.data && page.loading && <Loading />}
+        {page.data && !shown.length && <Empty title={t('No accounts match')} />}
       </div>
+      <Pager total={page.data?.total ?? 0} limit={USERS_PAGE} offset={offset} onChange={setOffset} loading={page.loading} />
       <div className="border-t border-line px-5 py-3 text-xs text-muted">
         <Badge tone={ROLE_TONE.technician}>{t('Technician')}</Badge> {t('validates observations in their coverage')} ·{' '}
         <Badge tone={ROLE_TONE.agriculturist}>{t('Agriculturist')}</Badge> {t('sees every area, resolves escalations and manages this dashboard.')}
@@ -741,7 +758,11 @@ export default function UsersPage({ onChanged }) {
               ['coverage', t('Coverage by municipality')],
             ]}
           />
-          {tab === 'accounts' ? <AccountsTable users={list} barangaysOf={barangaysOf} onSaved={done} /> : <CoverageGrid key={coverageKey} />}
+          {tab === 'accounts' ? (
+            <AccountsTable users={list} barangaysOf={barangaysOf} onSaved={done} version={coverageKey} />
+          ) : (
+            <CoverageGrid key={coverageKey} />
+          )}
         </div>
       )}
     </div>

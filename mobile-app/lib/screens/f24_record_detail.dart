@@ -10,6 +10,7 @@ import '../services/sync_service.dart';
 import '../theme.dart';
 import '../utils/formatters.dart';
 import '../widgets/app_widgets.dart';
+import '../widgets/land_type_sheet.dart';
 import '../widgets/motion.dart';
 import '../widgets/scan_map.dart';
 import 'f30_new_observation.dart' show ObserveArgs;
@@ -34,6 +35,11 @@ class _F24RecordDetailState extends State<F24RecordDetail> {
   String? _error;
   bool _loading = false;
 
+  /// The record shown is the copy saved on the phone (the refresh failed or
+  /// is still running); [_savedAt] is when it was saved, if known.
+  bool _fromCache = false;
+  DateTime? _savedAt;
+
   bool get _isTech => AuthControllerImpl.instance.role == AppRole.technician;
 
   @override
@@ -43,10 +49,28 @@ class _F24RecordDetailState extends State<F24RecordDetail> {
     _load();
   }
 
+  /// Cache first: the copy on the phone shows at once, then the server's
+  /// copy replaces it. Without signal the saved copy stays, with a note.
   Future<void> _load() async {
     final id = widget.serverId ?? _record?.id;
     if (id == null) return; // still on the phone; nothing on the server yet
     setState(() => _loading = true);
+    if (_record == null) {
+      try {
+        final cached = await SyncService.cachedRecord(id);
+        final pending = await SyncService.pendingTreatmentsFor(id);
+        if (cached != null && mounted && _record == null) {
+          setState(() {
+            _record = cached.data;
+            _pendingTreatments = pending;
+            _fromCache = true;
+            _savedAt = cached.savedAt;
+          });
+        }
+      } catch (e) {
+        debugPrint('[Record] no saved copy: $e');
+      }
+    }
     try {
       final r = await SyncService.record(id);
       final pending = await SyncService.pendingTreatmentsFor(id);
@@ -55,6 +79,8 @@ class _F24RecordDetailState extends State<F24RecordDetail> {
         _record = r ?? _record;
         _pendingTreatments = pending;
         _error = null;
+        _fromCache = false;
+        _savedAt = null;
       });
     } on ApiException catch (e) {
       if (!mounted) return;
@@ -64,10 +90,54 @@ class _F24RecordDetailState extends State<F24RecordDetail> {
         popOrGoHome(context);
         return;
       }
-      setState(() => _error = e.message);
+      setState(() {
+        _error = e.isOffline ? 'No signal, and this record is not saved on this phone yet.' : e.message;
+        if (_record != null) _fromCache = true;
+      });
+    } catch (e) {
+      // e.g. no local database: keep what is shown, offer a retry otherwise.
+      debugPrint('[Record] could not load: $e');
+      if (mounted) setState(() => _error = 'Something went wrong. Please try again.');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  /// Owner (before review) or technician: correct the land type.
+  Future<void> _changeLandType(Record r) async {
+    final updated = await showLandTypeChange(context, r, askReason: !r.isMine);
+    if (updated == null || !mounted) return;
+    setState(() {
+      _record = updated;
+      _fromCache = false;
+    });
+    _snack(context.tr('Land type saved.'));
+  }
+
+  Future<void> _retryTreatment(TreatmentInfo t) async {
+    final result = await SyncService.retryTreatment(t.clientUuid);
+    if (!mounted) return;
+    if (result == null) {
+      _snack(context.tr('Still no connection. It will be sent automatically.'));
+    } else if (result.isNotEmpty) {
+      _snack(context.tr('It could not be sent: {error}', {'error': context.tr(result)}));
+    }
+    _load();
+  }
+
+  Future<void> _discardTreatment(TreatmentInfo t) async {
+    final ok = await confirmAction(
+      context,
+      title: context.tr('Remove this treatment?'),
+      message: context.tr('It will be removed from this phone and not sent.'),
+      confirmLabel: context.tr('Remove'),
+      icon: Icons.delete_outline_rounded,
+      color: AppColors.danger,
+      summary: [(context.tr('Treatment'), t.treatment)],
+    );
+    if (!ok || !mounted) return;
+    await SyncService.discardTreatment(t.clientUuid);
+    if (mounted) _load();
   }
 
   /// Technicians: delete this observation for everyone, then leave.
@@ -77,20 +147,26 @@ class _F24RecordDetailState extends State<F24RecordDetail> {
     if (await confirmDeleteRecord(context, id) && mounted) popOrGoHome(context);
   }
 
+  /// "Try sending now": sends this observation once more, even one the
+  /// server refused before (the automatic sync skips those).
   Future<void> _sendNow() async {
+    final pending = _record?.pending;
+    if (pending == null) return;
     setState(() => _loading = true);
-    await SyncService.syncAll();
+    final outcome = await SyncService.retryObservation(pending);
     if (!mounted) return;
     final records = await SyncService.records();
     final uuid = _record?.clientUuid;
     final updated = records.where((r) => r.clientUuid == uuid).firstOrNull;
     if (!mounted) return;
     setState(() {
-      _record = updated ?? _record;
+      _record = outcome.uploaded ? outcome.record : (updated ?? _record);
       _loading = false;
     });
-    if (updated?.uploaded == true) {
+    if (outcome.uploaded) {
       _load();
+    } else if (outcome.error != null) {
+      _snack(context.tr('It could not be sent: {error}', {'error': context.tr(outcome.error!)}));
     } else {
       _snack(context.tr('Still no connection. It will be sent automatically.'));
     }
@@ -203,24 +279,36 @@ class _F24RecordDetailState extends State<F24RecordDetail> {
               child: r == null
                   ? (_error == null
                       ? const Center(child: CircularProgressIndicator())
-                      : AppEmptyState(
-                          icon: Icons.cloud_off_rounded,
-                          title: context.tr('Can\'t open this record'),
-                          message: context.tr(_error!),
-                          actionLabel: context.tr('Try again'),
-                          onAction: _load,
-                          color: AppColors.danger,
-                        ))
+                      : ListView(children: [LoadErrorState(message: _error!, onRetry: _load)]))
                   : RefreshIndicator(
                       onRefresh: _load,
                       child: ListView(
                         padding: const EdgeInsets.fromLTRB(AppSpacing.hPad, AppSpacing.sm, AppSpacing.hPad, AppSpacing.xl),
                         children: [
-                          _photo(r),
-                          const SizedBox(height: AppSpacing.lg),
-                          ..._statusSection(r),
-                          const SizedBox(height: AppSpacing.lg),
-                          _details(r),
+                          MaxContentWidth(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                if (_fromCache && r.uploaded)
+                                  _savedAt == null
+                                      ? Padding(
+                                          padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+                                          child: Text(
+                                            context.tr(_loading
+                                                ? 'Showing the copy saved on this phone while it refreshes.'
+                                                : 'Showing the copy saved on this phone.'),
+                                            style: const TextStyle(color: AppColors.textMuted, fontSize: 12.5),
+                                          ),
+                                        )
+                                      : SavedDataNote(savedAt: _savedAt!, refreshing: _loading),
+                                _photo(r),
+                                const SizedBox(height: AppSpacing.lg),
+                                ..._statusSection(r),
+                                const SizedBox(height: AppSpacing.lg),
+                                _details(r),
+                              ],
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -305,7 +393,7 @@ class _F24RecordDetailState extends State<F24RecordDetail> {
 
   List<Widget> _statusSection(Record r) {
     final state = r.state;
-    final chip = Align(alignment: Alignment.centerLeft, child: StatusChip(state: state));
+    final chip = Align(alignment: Alignment.centerLeft, child: StatusChip(state: state, staff: _isTech && !r.isMine));
     switch (state) {
       case RecordState.waiting:
         return [
@@ -323,6 +411,13 @@ class _F24RecordDetailState extends State<F24RecordDetail> {
                       context.tr('The pest check happens after it is sent, so there is no result yet.'),
                   ].join(' '),
           ),
+          if (r.uploadError.isNotEmpty) ...[
+            const SizedBox(height: AppSpacing.sm),
+            Text(
+              context.tr('It is not sent again automatically. Fix the problem if you can, then try again.'),
+              style: const TextStyle(color: AppColors.textMuted, fontSize: 12.5, height: 1.4),
+            ),
+          ],
           const SizedBox(height: AppSpacing.md),
           AppPrimaryButton(
             label: context.tr('Try sending now'),
@@ -482,6 +577,7 @@ class _F24RecordDetailState extends State<F24RecordDetail> {
     final c = r.confirmed!;
     final recs = r.recommendations;
     final treatments = [...r.treatments, ..._pendingTreatments];
+    final recommended = r.recommended;
     return [
       chip,
       const SizedBox(height: AppSpacing.md),
@@ -494,6 +590,14 @@ class _F24RecordDetailState extends State<F24RecordDetail> {
       for (final t in treatments.where((t) => t.followUpIsDue)) ...[
         const SizedBox(height: AppSpacing.md),
         _FollowUpPrompt(treatment: t),
+      ],
+      if (recommended.isNotEmpty) ...[
+        const SizedBox(height: AppSpacing.lg),
+        _Section(
+          icon: Icons.recommend_rounded,
+          title: context.tr(r.isMine ? 'Recommended by your technician' : 'Recommended by the reviewer'),
+          child: _Recommended(options: recommended),
+        ),
       ],
       const SizedBox(height: AppSpacing.lg),
       _Section(
@@ -534,7 +638,15 @@ class _F24RecordDetailState extends State<F24RecordDetail> {
         _Section(
           icon: Icons.history_rounded,
           title: context.tr(r.isMine ? 'What you applied' : 'Applied treatments'),
-          child: Column(children: [for (final t in treatments) _TreatmentRow(treatment: t)]),
+          child: Column(children: [
+            for (final t in treatments)
+              _TreatmentRow(
+                treatment: t,
+                before: r,
+                onRetry: t.pending && t.error.isNotEmpty ? () => _retryTreatment(t) : null,
+                onDiscard: t.pending && t.error.isNotEmpty ? () => _discardTreatment(t) : null,
+              ),
+          ]),
         ),
       ],
     ];
@@ -552,7 +664,26 @@ class _F24RecordDetailState extends State<F24RecordDetail> {
           if (r.resubmissionOf != null)
             _Detail(context.tr('Retake'), context.tr('New photo for report #{id}', {'id': r.resubmissionOf})),
           _Detail(context.tr('Crop stage'), context.tr(r.cropStage)),
-          _Detail(context.tr('Land type'), landTypeLabel(r.landType)),
+          _Detail(
+            context.tr('Land type'),
+            landTypeLabel(r.landType),
+            action: r.id != null && (r.landTypeEditableByOwner || _isTech)
+                ? TextButton(
+                    key: const ValueKey('change-land-type'),
+                    onPressed: () => _changeLandType(r),
+                    style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+                    child: Text(context.tr('Change')),
+                  )
+                : null,
+          ),
+          if (r.landTypeUpdatedAt.isNotEmpty)
+            _Detail(
+              context.tr('Land type changed'),
+              [
+                formatDateTime(r.landTypeUpdatedAt),
+                if (r.landTypeUpdatedBy.isNotEmpty) r.landTypeUpdatedBy,
+              ].join(' · '),
+            ),
           if (!r.isDisease) _Detail(context.tr('Checked by'), context.tr(r.monitoringMethod)),
           if (trap && r.trapType.isNotEmpty) _Detail(context.tr('Trap or lure'), context.tr(r.trapType)),
           if (trap && r.targetPest.isNotEmpty) _Detail(context.tr('Target pest'), context.tr(r.targetPest)),
@@ -837,7 +968,9 @@ class _Options extends StatelessWidget {
               children: [
                 IconTile(icon: kOptionTypeIcons[type]!, color: _optionColors[type]!, size: 30),
                 const SizedBox(width: AppSpacing.sm),
-                Text(kOptionTypeNames[type]!, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
+                Flexible(
+                  child: Text(kOptionTypeNames[type]!, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
+                ),
                 const SizedBox(width: 6),
                 Text('${recs.groups[type]!.length}', style: const TextStyle(color: AppColors.textMuted, fontWeight: FontWeight.w700)),
               ],
@@ -860,6 +993,14 @@ class _Options extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      if (o.recommended) ...[
+                        AppChip(
+                          label: context.tr('Recommended by your technician'),
+                          color: AppColors.primary,
+                          icon: Icons.recommend_rounded,
+                        ),
+                        const SizedBox(height: 6),
+                      ],
                       Text(o.title, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
                       const SizedBox(height: 4),
                       Text(o.description, style: const TextStyle(fontSize: 14, height: 1.45)),
@@ -940,15 +1081,89 @@ class _FollowUpPrompt extends StatelessWidget {
       );
 }
 
+/// Options the reviewer recommended from the approved library. They are
+/// recommendations, not treatments the farmer applied.
+class _Recommended extends StatelessWidget {
+  final List<RecommendedOption> options;
+  const _Recommended({required this.options});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          context.tr('Picked for this case from the approved options. These are recommendations, not treatments '
+              'you applied.'),
+          style: const TextStyle(color: AppColors.textSecondary, fontSize: 13.5, height: 1.4),
+        ),
+        for (final o in options)
+          Padding(
+            padding: const EdgeInsets.only(top: AppSpacing.sm),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(AppSpacing.md),
+              decoration: BoxDecoration(
+                color: AppColors.surfaceMuted,
+                border: Border(left: BorderSide(color: _optionColors[o.optionType] ?? AppColors.primary, width: 3)),
+                borderRadius: BorderRadius.circular(AppRadius.xs),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 4,
+                    children: [
+                      if (o.optionType.isNotEmpty)
+                        AppChip(
+                          label: kOptionTypeNames[o.optionType] ?? o.optionType,
+                          color: _optionColors[o.optionType] ?? AppColors.primary,
+                          icon: kOptionTypeIcons[o.optionType],
+                        ),
+                      if (!o.stillApproved)
+                        AppChip(label: context.tr('No longer approved'), color: AppColors.danger),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(o.title, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
+                  if (o.description.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(o.description, style: const TextStyle(fontSize: 14, height: 1.45)),
+                  ],
+                  if (o.recommendedByName.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Text(context.tr('Recommended by {name}', {'name': o.recommendedByName}),
+                        style: const TextStyle(color: AppColors.textMuted, fontSize: 12.5)),
+                  ],
+                  if (o.sourceReference.isNotEmpty)
+                    Text(context.tr('Source: {source}', {'source': o.sourceReference}),
+                        style: const TextStyle(color: AppColors.textMuted, fontSize: 12.5)),
+                ],
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
 class _TreatmentRow extends StatelessWidget {
   final TreatmentInfo treatment;
-  const _TreatmentRow({required this.treatment});
+
+  /// The observation the treatment was applied for ("before").
+  final Record before;
+  final VoidCallback? onRetry;
+  final VoidCallback? onDiscard;
+  const _TreatmentRow({required this.treatment, required this.before, this.onRetry, this.onDiscard});
 
   @override
   Widget build(BuildContext context) {
     final t = treatment;
     final (String status, Color color) = t.pending
-        ? (context.tr('Waiting for signal'), AppColors.textMuted)
+        ? (t.error.isNotEmpty
+            ? (context.tr('Not sent'), AppColors.danger)
+            : (context.tr('Waiting for signal'), AppColors.textMuted))
         : t.followUpScanId != null
             ? (context.tr('Follow-up sent'), AppColors.primary)
             : t.followUpIsDue
@@ -956,24 +1171,185 @@ class _TreatmentRow extends StatelessWidget {
                 : (context.tr('Follow-up on {date}', {'date': formatShortDate(t.followUpDue)}), AppColors.orange);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          IconTile(icon: kOptionTypeIcons[t.optionType] ?? Icons.task_alt_rounded, size: 38),
-          const SizedBox(width: AppSpacing.md),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              IconTile(icon: kOptionTypeIcons[t.optionType] ?? Icons.task_alt_rounded, size: 38),
+              const SizedBox(width: AppSpacing.md),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(t.treatment, style: const TextStyle(fontWeight: FontWeight.w800)),
+                    Text(context.tr('Applied {date}', {'date': formatShortDate(t.appliedAt)}),
+                        style: const TextStyle(color: AppColors.textMuted, fontSize: 12.5)),
+                    if (t.followUpSetBy != null && t.followUpScanId == null)
+                      Text(context.tr('Follow-up date set by your technician'),
+                          style: const TextStyle(color: AppColors.textMuted, fontSize: 12.5)),
+                    const SizedBox(height: 4),
+                    AppChip(label: status, color: color),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          if (t.pending && t.error.isNotEmpty) ...[
+            const SizedBox(height: AppSpacing.sm),
+            Text(
+              context.tr('It could not be sent: {error}', {'error': context.tr(t.error)}),
+              style: const TextStyle(color: AppColors.danger, fontSize: 13, height: 1.4),
+            ),
+            Wrap(
+              spacing: AppSpacing.sm,
               children: [
-                Text(t.treatment, style: const TextStyle(fontWeight: FontWeight.w800)),
-                Text(context.tr('Applied {date}', {'date': formatShortDate(t.appliedAt)}),
-                    style: const TextStyle(color: AppColors.textMuted, fontSize: 12.5)),
-                if (t.followUpSetBy != null && t.followUpScanId == null)
-                  Text(context.tr('Follow-up date set by your technician'),
-                      style: const TextStyle(color: AppColors.textMuted, fontSize: 12.5)),
+                if (onRetry != null)
+                  TextButton.icon(
+                    onPressed: onRetry,
+                    icon: const Icon(Icons.refresh_rounded, size: 18),
+                    label: Text(context.tr('Try again')),
+                  ),
+                if (onDiscard != null)
+                  TextButton.icon(
+                    onPressed: onDiscard,
+                    style: TextButton.styleFrom(foregroundColor: AppColors.danger),
+                    icon: const Icon(Icons.delete_outline_rounded, size: 18),
+                    label: Text(context.tr('Remove')),
+                  ),
               ],
             ),
+          ],
+          if (!t.pending) ...[
+            const SizedBox(height: AppSpacing.sm),
+            _BeforeAfter(before: before, treatment: t),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Before = the observation the treatment was for; after = the follow-up
+/// photo, if one was sent. Never says "improved": a follow-up without pests
+/// is not confirmed until a technician reviews it.
+class _BeforeAfter extends StatefulWidget {
+  final Record before;
+  final TreatmentInfo treatment;
+  const _BeforeAfter({required this.before, required this.treatment});
+
+  @override
+  State<_BeforeAfter> createState() => _BeforeAfterState();
+}
+
+class _BeforeAfterState extends State<_BeforeAfter> {
+  Record? _after;
+  bool _loading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAfter();
+  }
+
+  @override
+  void didUpdateWidget(covariant _BeforeAfter oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.treatment.followUpScanId != widget.treatment.followUpScanId) _loadAfter();
+  }
+
+  Future<void> _loadAfter() async {
+    final id = widget.treatment.followUpScanId;
+    if (id == null) return;
+    setState(() => _loading = true);
+    try {
+      final cached = await SyncService.cachedRecord(id);
+      if (cached != null && mounted) setState(() => _after = cached.data);
+    } catch (_) {}
+    try {
+      final fresh = await SyncService.record(id);
+      if (fresh != null && mounted) setState(() => _after = fresh);
+    } catch (_) {
+      // offline or gone: keep the saved copy, if any
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  static String _summary(BuildContext context, Record r) {
+    final c = r.confirmed;
+    final ai = r.ai;
+    final pest = c?.pestLabel ?? (ai != null && ai.recognized ? ai.pestLabel : null);
+    final count = c != null
+        ? (c.count == null ? context.tr('Not countable') : plural(c.count!, 'insect'))
+        : (ai != null && ai.recognized ? (ai.count == null ? context.tr('Not countable') : plural(ai.count!, 'insect')) : null);
+    final level = c?.level ?? r.level;
+    return [
+      formatShortDate(r.createdAt),
+      ?pest,
+      ?count,
+      if (level != null) context.tr('{level} infestation', {'level': levelLabel(level)}),
+    ].join(' · ');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.treatment;
+    final after = _after;
+    final String afterText;
+    Color afterColor = AppColors.textSecondary;
+    if (t.followUpScanId == null) {
+      afterText = t.followUpIsDue
+          ? context.tr('No follow-up photo yet. It is due now.')
+          : context.tr('No follow-up photo yet.');
+    } else if (after == null) {
+      afterText = _loading ? context.tr('Loading…') : context.tr('Open the follow-up with signal to see it.');
+    } else if (after.status == 'no_pests') {
+      afterText = '${formatShortDate(after.createdAt)} · '
+          '${context.tr('No pests detected on the follow-up photo — not yet confirmed by a technician')}';
+      afterColor = AppColors.sky;
+    } else if (after.status == 'validated') {
+      afterText = '${_summary(context, after)} · ${context.tr('Validated')}';
+      afterColor = AppColors.primary;
+    } else if (after.status == 'returned') {
+      afterText = '${formatShortDate(after.createdAt)} · ${recordStateLabel(after.state)}';
+      afterColor = AppColors.danger;
+    } else {
+      afterText = '${formatShortDate(after.createdAt)} · ${context.tr('Follow-up waiting for review')}';
+      afterColor = AppColors.orange;
+    }
+    Widget line(String label, String text, Color color) => Padding(
+          padding: const EdgeInsets.symmetric(vertical: 2),
+          child: Text.rich(
+            TextSpan(children: [
+              TextSpan(text: '$label: ', style: const TextStyle(color: AppColors.textMuted, fontWeight: FontWeight.w700)),
+              TextSpan(text: text, style: TextStyle(color: color, fontWeight: FontWeight.w600)),
+            ]),
+            style: const TextStyle(fontSize: 13, height: 1.4),
           ),
-          AppChip(label: status, color: color),
+        );
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.sm),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceMuted,
+        borderRadius: BorderRadius.circular(AppRadius.xs),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          line(context.tr('Before'), _summary(context, widget.before), AppColors.textPrimary),
+          line(context.tr('After'), afterText, afterColor),
+          if (t.followUpScanId != null)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: () => context.push(AppRouter.record, extra: t.followUpScanId),
+                style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+                icon: const Icon(Icons.open_in_new_rounded, size: 16),
+                label: Text(context.tr('Open the follow-up')),
+              ),
+            ),
         ],
       ),
     );
@@ -1131,7 +1507,11 @@ class _Section extends StatelessWidget {
                   const SizedBox(width: AppSpacing.sm),
                   Expanded(child: Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800))),
                   if (subtitle != null)
-                    Text(subtitle!, style: const TextStyle(color: AppColors.textMuted, fontSize: 12.5)),
+                    Flexible(
+                      child: Text(subtitle!,
+                          textAlign: TextAlign.end,
+                          style: const TextStyle(color: AppColors.textMuted, fontSize: 12.5)),
+                    ),
                 ],
               ),
               const SizedBox(height: AppSpacing.md),
@@ -1164,16 +1544,24 @@ class _Note extends StatelessWidget {
 class _Detail extends StatelessWidget {
   final String label;
   final String value;
-  const _Detail(this.label, this.value);
+  final Widget? action;
+  const _Detail(this.label, this.value, {this.action});
 
   @override
   Widget build(BuildContext context) => Padding(
         padding: const EdgeInsets.symmetric(vertical: 5),
         child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: action == null ? CrossAxisAlignment.start : CrossAxisAlignment.center,
           children: [
-            SizedBox(width: 110, child: Text(label, style: const TextStyle(color: AppColors.textMuted))),
-            Expanded(child: Text(value.isEmpty ? '—' : value, style: const TextStyle(height: 1.35, fontWeight: FontWeight.w600))),
+            // Label and value share the row (2:3) so long words wrap
+            // instead of overflowing on narrow phones or large text.
+            Expanded(flex: 2, child: Text(label, style: const TextStyle(color: AppColors.textMuted))),
+            const SizedBox(width: AppSpacing.sm),
+            Expanded(
+              flex: 3,
+              child: Text(value.isEmpty ? '—' : value, style: const TextStyle(height: 1.35, fontWeight: FontWeight.w600)),
+            ),
+            ?action,
           ],
         ),
       );

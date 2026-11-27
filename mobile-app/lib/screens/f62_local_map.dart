@@ -144,11 +144,19 @@ class _F62LocalMapState extends State<F62LocalMap> {
     return 'local_map_${from}_${q.entries.map((e) => '${e.key}=${e.value}').join('&')}';
   }
 
+  /// Cache first: the map saved for these filters shows at once, then the
+  /// server's answer replaces it. Without signal the saved one stays.
   Future<void> _load() async {
     setState(() => _loading = true);
     final key = _cacheKey;
+    final cached = await _readCache(key);
+    if (cached != null && mounted && key == _cacheKey) {
+      _apply(cached.$2);
+      setState(() => _savedAt = cached.$1);
+    }
     try {
       final data = await ApiClient.get('/analytics/hotspots', query: _query) as Map<String, dynamic>;
+      if (key != _cacheKey) return; // the filters changed meanwhile
       _apply(data);
       if (mounted) setState(() => _savedAt = null);
       try {
@@ -156,15 +164,8 @@ class _F62LocalMapState extends State<F62LocalMap> {
         await prefs.setString(key, jsonEncode({'saved_at': DateTime.now().toIso8601String(), 'data': data}));
       } catch (_) {}
     } on ApiException catch (e) {
-      final cached = e.isOffline ? await _readCache(key) : null;
-      if (!mounted) return;
-      if (cached != null) {
-        _apply(cached.$2);
-        setState(() {
-          _savedAt = cached.$1;
-          _error = null;
-        });
-      } else {
+      if (!mounted || key != _cacheKey) return;
+      if (cached == null) {
         setState(() => _error = e.isOffline ? 'No signal, and no saved map for this period yet.' : e.message);
       }
     } finally {
@@ -183,6 +184,8 @@ class _F62LocalMapState extends State<F62LocalMap> {
       'window': '7',
     };
     final key = 'local_spread_${query.entries.map((e) => '${e.key}=${e.value}').join('&')}';
+    final saved = await _readCache(key);
+    if (saved != null && mounted) setState(() => _spread = saved.$2);
     try {
       final data = await ApiClient.get('/analytics/spread', query: query) as Map<String, dynamic>;
       if (mounted) setState(() => _spread = data);
@@ -191,8 +194,7 @@ class _F62LocalMapState extends State<F62LocalMap> {
         await prefs.setString(key, jsonEncode({'saved_at': DateTime.now().toIso8601String(), 'data': data}));
       } catch (_) {}
     } catch (_) {
-      final cached = await _readCache(key);
-      if (mounted) setState(() => _spread = cached?.$2);
+      if (mounted) setState(() => _spread = saved?.$2);
     }
   }
 
@@ -357,7 +359,10 @@ class _F62LocalMapState extends State<F62LocalMap> {
                       ),
                     ],
                     const SizedBox(height: AppSpacing.md),
-                    if (_savedAt != null) ...[
+                    if (_savedAt != null && _loading) ...[
+                      SavedDataNote(savedAt: DateTime.tryParse(_savedAt!) ?? DateTime.now(), refreshing: true),
+                      const SizedBox(height: AppSpacing.sm),
+                    ] else if (_savedAt != null) ...[
                       InfoBanner(
                         icon: Icons.cloud_off_rounded,
                         color: AppColors.textSecondary,

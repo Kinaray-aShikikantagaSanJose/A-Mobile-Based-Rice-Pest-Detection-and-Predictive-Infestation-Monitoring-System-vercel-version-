@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { useT } from '../i18n/index.jsx';
-import { fmtConf, fmtCount, fmtDate, fmtDateTime, landTypeLabel, OPTION_TYPES, pestLabel, REVIEW_ACTIONS, ROLE_LABELS, useAction, useAsync, waitingLabel } from '../lib.js';
+import { fmtConf, fmtCount, fmtDate, fmtDateTime, LAND_TYPES, landTypeLabel, OPTION_TYPES, pestLabel, REVIEW_ACTIONS, ROLE_LABELS, useAction, useAsync, waitingLabel } from '../lib.js';
 import DetectionPhoto from './DetectionPhoto.jsx';
 import Icon from './icons.jsx';
 import MiniMap from './MiniMap.jsx';
 import ReviewForm from './ReviewForm.jsx';
-import { Badge, Button, Drawer, ErrorNote, LevelBadge, Loading, Notice, ReportTypeBadge, StatusBadge } from './ui.jsx';
+import { Badge, Button, Drawer, ErrorNote, LevelBadge, Loading, Notice, RelevanceBadge, ReportTypeBadge, Select, StatusBadge } from './ui.jsx';
 
 function Fact({ label, children, className = '' }) {
   return (
@@ -39,7 +39,7 @@ function AiCard({ ai }) {
       {ai.pest ? (
         <>
           <div className="mt-1 flex flex-wrap items-baseline gap-2">
-            <span className="text-lg font-bold text-ink">{ai.pest_name}</span>
+            <span className="text-lg font-bold text-ink">{t(ai.pest_name)}</span>
             {ai.confidence != null && <span className="text-sm font-semibold text-ink2">{t('{n} confidence', { n: fmtConf(ai.confidence) })}</span>}
           </div>
           {ai.confidence != null && (
@@ -69,7 +69,7 @@ function ConfirmedCard({ scan }) {
     <div className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4">
       <div className="text-xs font-semibold uppercase tracking-wide text-emerald-800">{t('Confirmed by the reviewer')}</div>
       <div className="mt-1 flex flex-wrap items-center gap-2">
-        <span className="text-lg font-bold text-ink">{c.pest === 'other' ? t(pestLabel(c.pest)) : c.pest_name || pestLabel(c.pest)}</span>
+        <span className="text-lg font-bold text-ink">{t(c.pest === 'other' ? pestLabel(c.pest) : c.pest_name || pestLabel(c.pest))}</span>
         <LevelBadge level={c.level} />
       </div>
       <div className="mt-1 text-sm text-ink2">
@@ -79,7 +79,7 @@ function ConfirmedCard({ scan }) {
       {c.indicators?.length > 0 && (
         <ul className="mt-2 list-disc space-y-0.5 pl-5 text-xs text-ink2">
           {c.indicators.map((i) => (
-            <li key={i}>{i}</li>
+            <li key={i}>{t(i)}</li>
           ))}
         </ul>
       )}
@@ -107,7 +107,7 @@ function History({ scan }) {
             {h.action === 'validated' && (
               <span className="font-normal text-ink2">
                 {' '}
-                — {h.pest === 'other' ? t(pestLabel(h.pest)) : pestLabel(h.pest)}, {fmtCount(h.count)}, {t(h.level)}
+                — {t(pestLabel(h.pest))}, {fmtCount(h.count)}, {t(h.level)}
               </span>
             )}
           </div>
@@ -115,6 +115,12 @@ function History({ scan }) {
             {h.reviewer} · {t(ROLE_LABELS[h.reviewer_role] || h.reviewer_role)} · {fmtDateTime(h.created_at)}
           </div>
           {h.note && <p className="mt-1 whitespace-pre-line text-sm text-ink">{h.note}</p>}
+          {h.reviewer_note && h.reviewer_note !== h.note && (
+            <p className="mt-1 whitespace-pre-line rounded-lg bg-canvas px-3 py-2 text-sm text-ink">
+              <span className="text-xs font-semibold uppercase tracking-wide text-ink2">{t('Reviewer note')}: </span>
+              {h.reviewer_note}
+            </p>
+          )}
         </li>
       ))}
     </ol>
@@ -154,6 +160,7 @@ function Recommendations({ recs }) {
             {recs.groups[k].map((r) => (
               <li key={r.id} className="text-sm">
                 <span className="font-semibold text-ink">{r.title}</span>
+                {r.recommended && <Badge tone="green">{t('Recommended by the reviewer')}</Badge>}
                 <span className="block text-xs text-muted">{t('Source:')} {r.source_reference}</span>
               </li>
             ))}
@@ -161,6 +168,59 @@ function Recommendations({ recs }) {
         </div>
       ))}
       <p className="rounded-lg bg-orange-50 px-3 py-2 text-xs text-orange-800">{t(recs.chemical_note)}</p>
+    </div>
+  );
+}
+
+/** Options the reviewer recommended from the approved library (not treatments applied). */
+function ReviewerRecommendations({ items }) {
+  const t = useT();
+  if (!items?.length) return <p className="text-sm text-ink2">{t('The reviewer did not recommend specific options.')}</p>;
+  return (
+    <ul className="space-y-1.5">
+      {items.map((r) => (
+        <li key={r.library_id} className="text-sm">
+          <span className="font-semibold text-ink">{r.title}</span>{' '}
+          <Badge tone="gray">{t(r.option_type)}</Badge>
+          {!r.still_approved && <Badge tone="orange">{t('No longer approved')}</Badge>}
+          <span className="block text-xs text-ink2">
+            {t('Recommended by {name}', { name: r.recommended_by_name })} · {fmtDate(r.created_at)}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** Technicians (their area) and agriculturists correct the land type; kept in the history. */
+function LandTypeEditor({ scan, onSaved }) {
+  const t = useT();
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(scan.land_type || '');
+  const [reason, setReason] = useState('');
+  const action = useAction();
+  if (!editing) {
+    return (
+      <button type="button" className="ml-2 text-xs font-semibold text-brand-700 hover:text-brand-900" onClick={() => setEditing(true)}>
+        {t('Correct')}
+      </button>
+    );
+  }
+  const save = () =>
+    action.run(async () => {
+      await api.setLandType(scan.id, value, reason.trim());
+      setEditing(false);
+      onSaved();
+    });
+  return (
+    <div className="mt-2 space-y-2">
+      <Select value={value} onChange={setValue} placeholder={t('Choose the land type')} options={LAND_TYPES.map(([v, l]) => [v, t(l)])} />
+      <input className="input" value={reason} maxLength={500} onChange={(e) => setReason(e.target.value)} placeholder={t('Why (optional, kept in the history)')} />
+      <ErrorNote message={action.error} />
+      <div className="flex gap-2">
+        <Button size="sm" busy={action.busy} disabled={!value || value === scan.land_type} onClick={save}>{t('Save')}</Button>
+        <Button size="sm" variant="secondary" onClick={() => setEditing(false)}>{t('Cancel')}</Button>
+      </div>
     </div>
   );
 }
@@ -249,7 +309,7 @@ export default function RecordDrawer({ scanId, viewer, onClose, onChanged, onRev
   };
 
   const title = scan
-    ? `#${scan.id} · ${isPest ? scan.confirmed?.pest_name || scan.ai?.pest_name || t(scan.status === 'no_pests' ? 'No pests found' : 'Pest report') : t('Disease report')}`
+    ? `#${scan.id} · ${isPest ? t(scan.confirmed?.pest_name || scan.ai?.pest_name || (scan.status === 'no_pests' ? 'No pests found' : 'Pest report')) : t('Disease report')}`
     : t('Observation #{id}', { id });
   const place = scan ? [scan.barangay, scan.municipality].filter(Boolean).join(', ') || t('No area') : null;
 
@@ -279,6 +339,7 @@ export default function RecordDrawer({ scanId, viewer, onClose, onChanged, onRev
               </button>
             )}
             {scan.location_status === 'outside_antique' && <Badge tone="orange">{t('GPS outside Antique')}</Badge>}
+            <RelevanceBadge relevance={scan.image_relevance} />
             {canDelete && !confirmDelete && (
               <Button variant="danger" size="sm" className="ml-auto" onClick={() => setConfirmDelete(true)}>
                 <Icon name="trash" className="h-4 w-4" />
@@ -363,7 +424,13 @@ export default function RecordDrawer({ scanId, viewer, onClose, onChanged, onRev
                     ) : null}
                   </Fact>
                   <Fact label={t('Crop stage')}>{scan.crop_stage && t(scan.crop_stage)}</Fact>
-                  <Fact label={t('Land type')}>{t(scan.land_type_label || landTypeLabel(scan.land_type))}</Fact>
+                  <Fact label={t('Land type')}>
+                    {t(scan.land_type_label || landTypeLabel(scan.land_type))}
+                    {staffView && <LandTypeEditor key={scan.land_type} scan={scan} onSaved={() => { detail.reload(); onChanged?.(); }} />}
+                    {scan.land_type_updated_by && (
+                      <span className="block text-xs text-ink2">{t('Corrected by {name}', { name: scan.land_type_updated_by })} · {fmtDate(scan.land_type_updated_at)}</span>
+                    )}
+                  </Fact>
                   {scan.monitoring_method && <Fact label={t('Monitoring')}>{t(scan.monitoring_method)}</Fact>}
                   {scan.monitoring_method === 'Trap-based' && (
                     <>
@@ -410,6 +477,12 @@ export default function RecordDrawer({ scanId, viewer, onClose, onChanged, onRev
             </Section>
           )}
 
+          {scan.status === 'validated' && isPest && (
+            <Section title={t('Recommended by the reviewer')} aside={<span className="text-xs text-muted">{t('Recommendations, not treatments applied')}</span>}>
+              <ReviewerRecommendations items={scan.recommended} />
+            </Section>
+          )}
+
           {scan.recommendations && (
             <Section title={t('Treatment options the farmer sees')} aside={<span className="text-xs text-muted">{t('From the approved library')}</span>}>
               <Recommendations recs={scan.recommendations} />
@@ -423,7 +496,7 @@ export default function RecordDrawer({ scanId, viewer, onClose, onChanged, onRev
           )}
 
           {isPest && (
-            <Section title={t('Treatments')}>
+            <Section title={t('Treatments applied by the farmer')}>
               {scan.treatments?.length ? (
                 <ul className="divide-y divide-line">
                   {scan.treatments.map((tx) => (

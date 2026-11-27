@@ -1,6 +1,10 @@
 """Observations (the `scans` table) as the mobile app and dashboard see them.
 
 Status flow: pending -> validated | returned | escalated; escalated -> validated.
+The two review queues are views of these same statuses (no extra status):
+  "Not Validated"    = pending   (initial review: technician of the area, or an
+                                  agriculturist where no technician covers it)
+  "To Be Validated"  = escalated (escalated review: agriculturist)
 Pest reports get a model result on upload; disease reports never do. A pest
 report on which the model confidently found no insect at all is closed at
 once as "no_pests" (its photo is deleted; see sync_router.submit_observation).
@@ -22,6 +26,15 @@ CHEMICAL_NOTE = (
 )
 METHOD_DIRECT = "Direct field observation"
 METHOD_TRAP = "Trap-based"
+
+# Review queues (labels only; the statuses stay pending / escalated).
+QUEUE_NOT_VALIDATED, QUEUE_TO_BE_VALIDATED = "not_validated", "to_be_validated"
+QUEUE_OF_STATUS = {"pending": QUEUE_NOT_VALIDATED, "escalated": QUEUE_TO_BE_VALIDATED}
+QUEUE_LABELS = {QUEUE_NOT_VALIDATED: "Not Validated", QUEUE_TO_BE_VALIDATED: "To Be Validated"}
+
+
+def queue_of(status: Optional[str]) -> Optional[str]:
+    return QUEUE_OF_STATUS.get(status or "")
 
 SELECT = """
     SELECT s.*, ST_Y(s.geom::geometry) AS lat, ST_X(s.geom::geometry) AS lng,
@@ -144,6 +157,12 @@ def shape(r, *, staff: bool = False) -> dict:
     out["image_deleted"] = getattr(r, "image_deleted_at", None) is not None
     out["location_status"] = getattr(r, "location_status", "") or ""
     out["gps_barangay_psgc"] = getattr(r, "gps_barangay_psgc", None)
+    # Relevance screen ('' = checked before it existed). "possibly_unrelated"
+    # asks the reviewer to make sure the photo shows a crop at all.
+    out["image_relevance"] = getattr(r, "image_relevance", "") or ""
+    out["queue"] = queue_of(r.validation_status)
+    out["land_type_updated_by"] = getattr(r, "land_type_updated_by", None)
+    out["land_type_updated_at"] = _iso(getattr(r, "land_type_updated_at", None))
     if is_pest:
         out["ai"] = {
             "status": r.ai_status,
@@ -244,14 +263,15 @@ def tried_options(db: Session, owner_email: Optional[str]) -> dict:
 
 
 def recommendations(db: Session, pest: Optional[str], crop_stage: str, level: Optional[str],
-                    owner_email: Optional[str] = None) -> dict:
+                    owner_email: Optional[str] = None, recommended: Optional[list] = None) -> dict:
     """Approved library options for a validated pest record, grouped by type.
     The app lists them; it never picks one or prescribes a product or dose.
     Options the owner already applied and reported back on are left out (and
     listed in "already_tried") unless staff re-allowed them."""
     groups = {t: [] for t in OPTION_TYPES}
     if not pest or not level:
-        return {"groups": groups, "chemical_note": CHEMICAL_NOTE, "already_tried": []}
+        return {"groups": groups, "chemical_note": CHEMICAL_NOTE, "already_tried": [],
+                "recommended": recommended or []}
     rows = db.execute(
         text(
             """
@@ -266,6 +286,7 @@ def recommendations(db: Session, pest: Optional[str], crop_stage: str, level: Op
         {"p": pest, "stage": crop_stage, "level": level},
     ).fetchall()
     tried = tried_options(db, owner_email)
+    chosen = {c["library_id"] for c in (recommended or [])}
     already_tried = []
     for r in rows:
         if r.id in tried:
@@ -276,8 +297,48 @@ def recommendations(db: Session, pest: Optional[str], crop_stage: str, level: Op
             "title": r.title,
             "description": r.recommendation,
             "source_reference": r.source_reference,
+            # Picked by the reviewer for this observation (see scan_recommendations).
+            "recommended": r.id in chosen,
         })
-    return {"groups": groups, "chemical_note": CHEMICAL_NOTE, "already_tried": already_tried}
+    # A reviewer may pick an approved option outside the stage/level tags;
+    # their pick is always listed (still approved ones only).
+    listed = {o["id"] for g in groups.values() for o in g}
+    for c in recommended or []:
+        if c["library_id"] not in listed and c.get("still_approved"):
+            groups.setdefault(c["option_type"], []).append({
+                "id": c["library_id"], "title": c["title"], "description": c["description"],
+                "source_reference": c["source_reference"], "recommended": True})
+    return {"groups": groups, "chemical_note": CHEMICAL_NOTE, "already_tried": already_tried,
+            "recommended": recommended or []}
+
+
+def reviewer_recommendations(db: Session, scan_id: int) -> list:
+    """Library options a reviewer recommended for this observation (not what
+    the farmer applied; that is in `treatments`)."""
+    if not schema.recommendations_ready(db):
+        return []
+    rows = db.execute(
+        text(
+            """
+            SELECT r.library_id, r.recommended_by, r.recommended_by_role, r.created_at,
+                   l.title, l.option_type, l.recommendation, l.source_reference, l.status,
+                   u.full_name AS recommended_by_name
+            FROM scan_recommendations r
+            JOIN treatment_library l ON l.id = r.library_id
+            LEFT JOIN users_fdw u ON u.email = r.recommended_by
+            WHERE r.scan_id = :i
+            ORDER BY l.option_type, l.title
+            """
+        ),
+        {"i": scan_id},
+    ).fetchall()
+    return [
+        {"library_id": r.library_id, "title": r.title, "option_type": r.option_type,
+         "description": r.recommendation, "source_reference": r.source_reference,
+         "still_approved": r.status == "approved", "recommended_by_role": r.recommended_by_role,
+         "recommended_by_name": r.recommended_by_name or r.recommended_by, "created_at": _iso(r.created_at)}
+        for r in rows
+    ]
 
 
 def notify(db: Session, email: str, scan_id: Optional[int], kind: str, title: str, body: str = "") -> None:
@@ -294,10 +355,12 @@ def notify_t(db: Session, email: str, scan_id: Optional[int], kind: str, title_k
              body_key: Optional[str] = None, body_text: Optional[str] = None, **params) -> None:
     """A notification written in the recipient's language (app/i18n.py).
     `body_text` (free text typed by a person, e.g. a return reason) is used
-    as is. {level} params are translated too."""
+    as is. {level} and {pest} params are translated too."""
     lang = i18n.language_of(db, email)
     if params.get("level"):
         params["level"] = i18n.render(f"level.{str(params['level']).upper()}", lang)
+    if params.get("pest"):
+        params["pest"] = i18n.t(params["pest"], lang)
     title = i18n.render(title_key, lang, **params)
     body = body_text if body_text is not None else (i18n.render(body_key, lang, **params) if body_key else "")
     notify(db, email, scan_id, kind, title, body)
@@ -307,15 +370,19 @@ def follow_up_due(applied: date) -> date:
     return applied + timedelta(days=FOLLOW_UP_DAYS)
 
 
-def log_review(db: Session, scan_id: int, viewer: dict, action: str, **fields) -> None:
-    db.execute(
+def log_review(db: Session, scan_id: int, viewer: dict, action: str, **fields) -> int:
+    """One row in the review history; returns its id. `note` is the system's
+    summary of what changed; `reviewer_note` is what the reviewer wrote."""
+    with_note = schema.reviewer_note_ready(db)
+    return db.execute(
         text(
-            """
+            f"""
             INSERT INTO scan_reviews (scan_id, reviewer, reviewer_role, action, corrected_count,
                                       diagnosis, guidance, library_id, pest, countable, level,
-                                      indicators, note)
+                                      indicators, note{", reviewer_note" if with_note else ""})
             VALUES (:scan_id, :by, :role, :action, :count, :diag, :guid, :lib, :pest, :countable,
-                    :level, :indicators, :note)
+                    :level, :indicators, :note{", :reviewer_note" if with_note else ""})
+            RETURNING id
             """
         ),
         {
@@ -325,5 +392,14 @@ def log_review(db: Session, scan_id: int, viewer: dict, action: str, **fields) -
             "pest": fields.get("pest"), "countable": fields.get("countable"),
             "level": fields.get("level"), "indicators": fields.get("indicators") or [],
             "note": fields.get("note", ""),
+            "reviewer_note": fields.get("reviewer_note", ""),
         },
-    )
+    ).scalar()
+
+
+def meaningful(text_: str, min_chars: int = 10) -> bool:
+    """A reviewer note worth keeping: at least `min_chars` characters and two
+    words with letters (rejects "ok", "...", "aaaaaaaaaa")."""
+    t = " ".join((text_ or "").split())
+    words = [w for w in t.split(" ") if any(ch.isalpha() for ch in w)]
+    return len(t) >= min_chars and len(words) >= 2 and len(set(t.replace(" ", "").lower())) > 2

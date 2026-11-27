@@ -187,27 +187,37 @@ class _BottomBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     Widget item(_TabSpec t) => Expanded(child: _NavItem(tab: t, active: t.id == current, onTap: () => onTap(t.id)));
-    return DecoratedBox(
-      decoration: const BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-        boxShadow: AppShadows.raised,
-      ),
-      child: SafeArea(
-        top: false,
-        child: SizedBox(
-          height: 74,
-          child: Row(
-            children: [
-              item(tabs[0]),
-              item(tabs[1]),
-              SizedBox(width: 84, child: _ScanButton(onTap: onScan)),
-              item(tabs[2]),
-              item(tabs[3]),
-            ],
+    // Labels grow with the phone's text size (up to 1.4x here), so the bar
+    // grows with them instead of overflowing; the scan slot shrinks on
+    // narrow phones so the four tabs keep room for their labels.
+    return MediaQuery.withClampedTextScaling(
+      maxScaleFactor: 1.4,
+      child: Builder(builder: (context) {
+        final labelExtra = MediaQuery.textScalerOf(context).scale(11.5) - 11.5;
+        final scanWidth = (MediaQuery.sizeOf(context).width * 0.22).clamp(64.0, 84.0);
+        return DecoratedBox(
+          decoration: const BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+            boxShadow: AppShadows.raised,
           ),
-        ),
-      ),
+          child: SafeArea(
+            top: false,
+            child: SizedBox(
+              height: 74 + labelExtra * 1.5,
+              child: Row(
+                children: [
+                  item(tabs[0]),
+                  item(tabs[1]),
+                  SizedBox(width: scanWidth, child: _ScanButton(onTap: onScan, size: scanWidth < 80 ? 48 : 54)),
+                  item(tabs[2]),
+                  item(tabs[3]),
+                ],
+              ),
+            ),
+          ),
+        );
+      }),
     );
   }
 }
@@ -280,7 +290,8 @@ class _NavItem extends StatelessWidget {
 /// The big round camera button in the middle of the bar: starts a new observation.
 class _ScanButton extends StatelessWidget {
   final VoidCallback onTap;
-  const _ScanButton({required this.onTap});
+  final double size;
+  const _ScanButton({required this.onTap, this.size = 54});
 
   @override
   Widget build(BuildContext context) {
@@ -299,8 +310,8 @@ class _ScanButton extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Container(
-                width: 54,
-                height: 54,
+                width: size,
+                height: size,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   gradient: const LinearGradient(
@@ -313,11 +324,13 @@ class _ScanButton extends StatelessWidget {
                     BoxShadow(color: AppColors.primary.withValues(alpha: 0.4), blurRadius: 14, offset: const Offset(0, 5)),
                   ],
                 ),
-                child: const Icon(Icons.photo_camera_rounded, color: AppColors.surface, size: 26),
+                child: Icon(Icons.photo_camera_rounded, color: AppColors.surface, size: size * 0.48),
               ),
               const SizedBox(height: 2),
               Text(
                 context.tr('Scan'),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: const TextStyle(color: AppColors.primaryDark, fontSize: 11.5, fontWeight: FontWeight.w800),
               ),
             ],

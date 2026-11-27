@@ -5,9 +5,9 @@ import re
 from datetime import date, datetime, timedelta, timezone
 from typing import List, Literal, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
 from pydantic import BaseModel, Field, field_validator, model_validator
-from sqlalchemy import text
+from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session
 
 from . import activity, avatars, i18n, insights, land, levels, observations as obs, schema
@@ -51,26 +51,40 @@ def me(db: Session = Depends(get_db), viewer: dict = Depends(require_viewer(*STA
 
 @router.get("/my-reviews")
 def my_reviews(
+    response: Response,
+    action: str = "",
+    limit: int = Query(500, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_geo_db),
     viewer: dict = Depends(require_viewer(*STAFF)),
 ):
+    """The signed-in reviewer's decisions, newest first, paged on the server
+    (X-Total-Count = all matching rows)."""
+    params = {"me": viewer["email"], "limit": limit, "offset": offset}
+    where = "r.reviewer = :me"
+    if action:
+        params["action"] = action
+        where += " AND r.action = :action"
+    response.headers["X-Total-Count"] = str(db.execute(
+        text(f"SELECT COUNT(*) FROM scan_reviews r WHERE {where}"), params).scalar())
+    note_col = "r.reviewer_note" if schema.reviewer_note_ready(db) else "'' AS reviewer_note"
     rows = db.execute(
         text(
-            """
+            f"""
             SELECT r.id, r.scan_id, r.action, r.pest, r.corrected_count, r.countable, r.level,
-                   r.note, r.diagnosis, r.created_at, s.report_type, s.ai_pest,
+                   r.note, r.diagnosis, r.created_at, s.report_type, s.ai_pest, {note_col},
                    COALESCE(NULLIF(btrim(s.municipality), ''), btrim(u.region), '') AS area,
                    COALESCE(NULLIF(btrim(s.barangay), ''), btrim(u.barangay), '') AS brgy,
                    u.full_name AS farmer_name, s.user_email
             FROM scan_reviews r
             JOIN scans s ON s.id = r.scan_id
             LEFT JOIN users_fdw u ON u.email = s.user_email
-            WHERE r.reviewer = :me
+            WHERE {where}
             ORDER BY r.created_at DESC, r.id DESC
-            LIMIT 500
+            LIMIT :limit OFFSET :offset
             """
         ),
-        {"me": viewer["email"]},
+        params,
     ).fetchall()
     return [
         {
@@ -84,6 +98,7 @@ def my_reviews(
             "countable": r.countable,
             "level": r.level,
             "note": r.note or r.diagnosis or "",
+            "reviewer_note": r.reviewer_note or "",
             "municipality": r.area,
             "barangay": r.brgy,
             "farmer": r.farmer_name or r.user_email,
@@ -243,6 +258,12 @@ def delete_library_entry(
     db: Session = Depends(get_geo_db),
     viewer: dict = Depends(require_viewer(AGRICULTURIST)),
 ):
+    if schema.recommendations_ready(db) and db.execute(
+        text("SELECT 1 FROM scan_recommendations WHERE library_id = :i LIMIT 1"), {"i": entry_id}
+    ).first():
+        # Kept so the recommendation history stays complete.
+        raise HTTPException(status_code=409,
+                            detail="This option was recommended on observations. Move it back to draft instead of deleting it.")
     result = db.execute(text("DELETE FROM treatment_library WHERE id = :i"), {"i": entry_id})
     if result.rowcount == 0:
         raise HTTPException(status_code=404, detail="Recommendation not found.")
@@ -305,11 +326,51 @@ def save_criteria(
         {"p": payload.pest, "s": payload.crop_stage, "mf": payload.medium_from,
          "hf": payload.high_from, "by": viewer["email"]},
     )
+    if schema.criteria_provisional_ready(db):
+        # New numbers have not been checked against a source yet.
+        db.execute(
+            text("UPDATE level_criteria SET provisional = TRUE, confirmed_by = NULL, confirmed_at = NULL "
+                 "WHERE pest = :p AND crop_stage = :s"),
+            {"p": payload.pest, "s": payload.crop_stage},
+        )
     activity.log(db, "criteria_changed", target_type="criteria", target_id=payload.pest,
                  details={"action": "saved", "crop_stage": payload.crop_stage,
                           "medium_from": payload.medium_from, "high_from": payload.high_from})
     db.commit()
     return levels.load_thresholds(db)[(payload.pest, payload.crop_stage)]
+
+
+class CriteriaConfirmIn(BaseModel):
+    """An agriculturist marks thresholds as checked against a source."""
+    source_reference: str = Field(min_length=5, max_length=500)
+    confirmed: bool = True
+
+
+@router.post("/criteria/{criteria_id}/confirm")
+def confirm_criteria(
+    criteria_id: int,
+    payload: CriteriaConfirmIn,
+    db: Session = Depends(get_geo_db),
+    viewer: dict = Depends(require_viewer(AGRICULTURIST)),
+):
+    """`confirmed`: true = no longer provisional (with the source it was
+    checked against); false = back to provisional."""
+    if not schema.criteria_provisional_ready(db):
+        raise HTTPException(status_code=503, detail="This needs a database update first.")
+    row = db.execute(
+        text("UPDATE level_criteria SET provisional = :prov, source_reference = :src, "
+             "confirmed_by = CASE WHEN :ok THEN :by ELSE NULL END, "
+             "confirmed_at = CASE WHEN :ok THEN now() ELSE NULL END "
+             "WHERE id = :i RETURNING pest, crop_stage"),
+        {"prov": not payload.confirmed, "ok": payload.confirmed, "src": payload.source_reference.strip(),
+         "by": viewer["email"], "i": criteria_id},
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Thresholds not found.")
+    activity.log(db, "criteria_confirmed", target_type="criteria", target_id=criteria_id,
+                 details={"confirmed": payload.confirmed, "source_reference": payload.source_reference.strip()})
+    db.commit()
+    return levels.load_thresholds(db)[(row.pest, row.crop_stage)]
 
 
 @router.delete("/criteria/{criteria_id}")
@@ -408,17 +469,39 @@ def _user_row(u: User, viewer: dict, scan_counts: dict, avatar_files: Optional[d
 
 @router.get("/users")
 def users(
+    response: Response,
+    q: str = Query("", max_length=200),
+    role: str = "",
+    status: str = "",
+    municipality: str = "",
+    limit: Optional[int] = Query(None, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
     geo: Session = Depends(get_geo_db),
     viewer: dict = Depends(require_viewer(AGRICULTURIST)),
 ):
+    """Accounts: verified ones waiting for approval first, then newest first
+    (id breaks ties). Filters and paging happen here; X-Total-Count is the
+    number of matching accounts. Without `limit` every match is returned."""
     scan_counts = {
         r.user_email: r.c
         for r in geo.execute(text("SELECT user_email, COUNT(*) AS c FROM scans GROUP BY 1")).fetchall()
     }
-    rows = db.query(User).order_by(User.created_at.desc()).all()
-    # Verified accounts waiting for approval come first.
-    rows.sort(key=lambda u: not (u.status == "pending" and u.is_verified))
+    query = db.query(User)
+    if role in ROLES:
+        query = query.filter(User.role == role)
+    if status in ("pending", "approved", "rejected"):
+        query = query.filter(User.status == status)
+    if municipality.strip():
+        query = query.filter(func.lower(func.trim(User.region)) == municipality.strip().lower())
+    if q.strip():
+        like = f"%{q.strip().lower()}%"
+        query = query.filter(or_(func.lower(User.full_name).like(like), func.lower(User.email).like(like),
+                                 func.lower(User.barangay).like(like)))
+    rows = query.order_by(User.created_at.desc(), User.id.desc()).all()
+    rows.sort(key=lambda u: not (u.status == "pending" and u.is_verified))  # stable sort keeps the order
+    response.headers["X-Total-Count"] = str(len(rows))
+    rows = insights.page(rows, limit, offset)
     files = avatars.all_filenames(db)
     return [_user_row(u, viewer, scan_counts, files) for u in rows]
 
@@ -687,8 +770,14 @@ def _n(v) -> str:
     return "" if v is None else v
 
 
+STATUS_LABELS = {"pending": "Not Validated", "escalated": "To Be Validated", "validated": "Validated",
+                  "returned": "Returned", "no_pests": "No pests found"}
+RELEVANCE_LABELS = {"relevant": "Relevant", "possibly_unrelated": "Possibly unrelated photo", "": "Not checked"}
+
+
 @router.get("/reports/{kind}")
 def report(
+    request: Request,
     kind: Literal["records", "monthly", "quarterly", "treatments"],
     start: str = "",
     end: str = "",
@@ -696,63 +785,97 @@ def report(
     quarter: str = "",
     municipality: str = "",
     land_type: str = "",
+    status: str = "validated",
+    pest: str = "",
+    level: str = "",
+    crop_stage: str = "",
+    q: str = "",
+    relevance: str = "",
+    outcome: str = "",
+    sort: str = insights.DEFAULT_SORT,
+    lang: str = "",
     db: Session = Depends(get_geo_db),
     viewer: dict = Depends(require_viewer(AGRICULTURIST)),
 ):
+    """CSV exports. The records export takes the same filters and sort as
+    GET /analytics/records and always contains EVERY matching row (no
+    paging). Headers and labels follow ?lang= (en / fil / krj); codes such as
+    ids, dates and coordinates are unchanged."""
     today = local_today().isoformat()
+    L = i18n.request_language(request, viewer, lang)
+
+    def tr(v):
+        return i18n.t(v, L) if isinstance(v, str) else v
+
+    def head(cols):
+        return [tr(c) for c in cols]
+
     activity.log(db, "report_exported", target_type="report", target_id=kind,
-                 details={"start": start, "end": end, "month": month, "quarter": quarter,
-                          "municipality": municipality, "land_type": land_type}, commit=True)
+                 details={"start": start, "end": end, "month": month, "quarter": quarter, "status": status,
+                          "municipality": municipality, "land_type": land_type, "pest": pest, "level": level,
+                          "crop_stage": crop_stage, "q": q, "relevance": relevance, "language": L}, commit=True)
     if kind == "records":
-        rows = insights.filter_scans(
-            insights.load_scans(db, viewer, start=insights.parse_day(start), end=insights.parse_day(end)),
-            municipality=municipality, land_type=land_type,
-        )
+        statuses = None if status == "all" else ((status,) if status in insights.STATUSES else insights.VALIDATED)
+        rows = insights.sort_rows(insights.filter_scans(
+            insights.load_scans(db, viewer, statuses=statuses, start=insights.parse_day(start),
+                                end=insights.parse_day(end)),
+            pest=pest, level=level, municipality=municipality, crop_stage=crop_stage, q=q,
+            land_type=land_type, relevance=relevance,
+        ), sort)
+        name = "validated-observations" if statuses == insights.VALIDATED else "observations"
         return _csv(
-            f"validated-observations-{today}.csv",
-            ["Observation ID", "Date", "Municipality", "Barangay", "Submitted by", "Type", "Pest",
-             "Count", "Infestation level", "Crop stage", "Land type", "Monitoring method", "Validated by",
-             "Validated at", "Diagnosis", "Guidance", "Latitude", "Longitude"],
+            f"{name}-{today}.csv",
+            head(["Observation ID", "Date", "Municipality", "Barangay", "Submitted by", "Type", "Status", "Pest",
+                  "Count", "Infestation level", "Crop stage", "Land type", "Monitoring method", "Photo check",
+                  "Validated by", "Validated at", "Diagnosis", "Guidance", "Latitude", "Longitude"]),
             [[r["id"], r["created_at"][:10], r["municipality"], r["barangay"], r["farmer_name"] or r["user_email"],
-              r["report_type"], r["pest"], _n(r["count"]) if r["count"] is not None else "not countable",
-              _n(r["level"]), r["crop_stage"], r["land_type_label"], r["monitoring_method"], _n(r["validated_by"]),
+              tr(r["report_type"]), tr(STATUS_LABELS.get(r["status"], r["status"])), tr(r["pest"]),
+              _n(r["count"]) if r["count"] is not None else tr("not countable"),
+              tr(_n(r["level"])), tr(r["crop_stage"]), tr(r["land_type_label"]), r["monitoring_method"],
+              tr(RELEVANCE_LABELS.get(r.get("image_relevance", ""), "Not checked")), _n(r["validated_by"]),
               (r["validated_at"] or "")[:10], r["diagnosis"], r["guidance"], _n(r["lat"]), _n(r["lng"])]
              for r in rows],
         )
     if kind == "monthly":
         data = insights.monthly_summary(db, viewer, month, strict=True)
-        body = [[data["month"], dim, g["name"], g["records"], g["pests"], g["LOW"], g["MEDIUM"], g["HIGH"]]
+        body = [[data["month"], tr(dim), tr(g["name"]), g["records"], g["pests"], g["LOW"], g["MEDIUM"], g["HIGH"]]
                 for dim, key in (("Municipality", "by_area"), ("Pest", "by_pest"), ("Land type", "by_land_type"))
                 for g in data[key]]
         return _csv(
             f"monthly-summary-{data['month'] or today}.csv",
-            ["Month", "Breakdown", "Name", "Validated observations", "Pests counted", "LOW", "MEDIUM", "HIGH"],
+            head(["Month", "Breakdown", "Name", "Validated observations", "Pests counted", "LOW", "MEDIUM", "HIGH"]),
             body,
         )
     if kind == "quarterly":
         data = insights.quarterly_patterns(db, viewer, quarter, strict=True)
         return _csv(
             f"quarterly-patterns-{data['quarter'] or today}.csv",
-            ["Quarter", "Municipality", "Pest", "Compared by", "This quarter", "Previous quarter",
-             "Same quarter last year", "Change %", "Pattern", "Recurring", "Note"],
-            [[data["quarter"], r["area"], r["pest"], r["basis"], r["current"][r["basis"]],
-              r["previous"][r["basis"]], r["last_year"][r["basis"]], _n(r["change_pct"]), r["status"],
-              "yes" if r["recurring"] else "no", "Pattern in past records, not a forecast"]
+            head(["Quarter", "Municipality", "Pest", "Compared by", "This quarter", "Previous quarter",
+                  "Same quarter last year", "Change %", "Pattern", "Recurring", "Note"]),
+            [[data["quarter"], r["area"], tr(r["pest"]), tr(r["basis"]), r["current"][r["basis"]],
+              r["previous"][r["basis"]], r["last_year"][r["basis"]], _n(r["change_pct"]), tr(r["status"]),
+              tr("yes" if r["recurring"] else "no"), tr("Pattern in past records, not a forecast")]
              for r in data["rows"]],
         )
     data = insights.treatment_followups(db, viewer)
     s, e = insights.parse_day(start), insights.parse_day(end)
     items = [i for i in data["items"]
-             if (not s or i["applied_at"][:10] >= s.isoformat()) and (not e or i["applied_at"][:10] <= e.isoformat())]
+             if (not s or i["applied_at"][:10] >= s.isoformat()) and (not e or i["applied_at"][:10] <= e.isoformat())
+             and (not municipality or i["municipality"].lower() == municipality.strip().lower())
+             and (not land_type or i["land_type"] == land_type)
+             and (not outcome or i["outcome"] == outcome or (outcome == "pending" and i["pending"]))]
     return _csv(
         f"treatment-followups-{today}.csv",
-        ["Treatment ID", "Observation ID", "Municipality", "Barangay", "Farmer", "Pest", "Crop stage",
-         "Land type", "Treatment", "Type", "Applied", "Follow-up due", "Level before", "Count before",
-         "Follow-up observation", "Level after", "Count after", "Change %", "Outcome"],
-        [[i["id"], i["scan_id"], i["municipality"], i["barangay"], i["farmer_name"], i["pest"], i["crop_stage"],
-          i["land_type_label"], i["treatment"], i["option_type"], i["applied_at"][:10], _n(i["follow_up_due"]), _n(i["before_level"]),
-          _n(i["before_count"]), _n(i["follow_up_scan_id"]), _n(i["after_level"]), _n(i["after_count"]),
-          _n(i["reduction_pct"]), i["outcome"]] for i in items],
+        head(["Treatment ID", "Observation ID", "Municipality", "Barangay", "Farmer", "Pest", "Crop stage",
+              "Land type", "Treatment applied", "Type", "Recommended by reviewer", "Applied", "Follow-up due",
+              "Observed before", "Level before", "Count before", "Follow-up observation", "Observed after",
+              "Level after", "Count after", "Change %", "Outcome", "Outcome basis"]),
+        [[i["id"], i["scan_id"], i["municipality"], i["barangay"], i["farmer_name"], tr(i["pest"]),
+          tr(i["crop_stage"]), tr(i["land_type_label"]), i["treatment"], i["option_type"],
+          tr("yes" if i["was_recommended"] else "no"), i["applied_at"][:10], _n(i["follow_up_due"]),
+          (i["before_at"] or "")[:10], tr(_n(i["before_level"])), _n(i["before_count"]), _n(i["follow_up_scan_id"]),
+          (i["follow_up_at"] or "")[:10], tr(_n(i["after_level"])), _n(i["after_count"]), _n(i["reduction_pct"]),
+          tr(i["outcome"]), i["outcome_basis"]] for i in items],
     )
 
 

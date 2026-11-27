@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart';
 
 import '../platform/local_files.dart';
@@ -107,6 +108,10 @@ class OutboxTreatment {
   final String customText;
   final String appliedAt; // yyyy-mm-dd
 
+  /// Set when the server refused it (4xx). It stays on the phone, is shown
+  /// on its record, and is only sent again when the person asks.
+  final String lastError;
+
   const OutboxTreatment({
     this.id,
     required this.clientUuid,
@@ -115,6 +120,7 @@ class OutboxTreatment {
     required this.label,
     this.customText = '',
     required this.appliedAt,
+    this.lastError = '',
   });
 
   Map<String, Object?> toMap() => {
@@ -125,6 +131,7 @@ class OutboxTreatment {
         'label': label,
         'custom_text': customText,
         'applied_at': appliedAt,
+        'last_error': lastError,
       };
 
   factory OutboxTreatment.fromMap(Map<String, Object?> m) => OutboxTreatment(
@@ -135,7 +142,24 @@ class OutboxTreatment {
         label: m['label'] as String? ?? '',
         customText: m['custom_text'] as String? ?? '',
         appliedAt: m['applied_at'] as String,
+        lastError: m['last_error'] as String? ?? '',
       );
+}
+
+/// Work still on this phone (not yet on the server).
+class PendingCounts {
+  final int observations;
+  final int treatments;
+  const PendingCounts(this.observations, this.treatments);
+
+  int get total => observations + treatments;
+}
+
+/// A saved server answer and when it was saved.
+class CacheEntry {
+  final Object? data;
+  final DateTime savedAt;
+  const CacheEntry(this.data, this.savedAt);
 }
 
 /// Phone-side storage: the outbox (work waiting for signal), a cache of the
@@ -145,7 +169,7 @@ class LocalStore {
   LocalStore._();
   static final LocalStore instance = LocalStore._();
 
-  static const int _version = 13;
+  static const int _version = 14;
   Database? _db;
 
   Future<Database> _open() async {
@@ -180,6 +204,10 @@ class LocalStore {
         // v13: GPS accuracy of the observation's location.
         if (oldVersion < 13) {
           await db.execute('ALTER TABLE outbox ADD COLUMN gps_accuracy_m REAL');
+        }
+        // v14: treatments the server refused stay on the phone with the reason.
+        if (oldVersion < 14) {
+          await db.execute("ALTER TABLE treatment_outbox ADD COLUMN last_error TEXT NOT NULL DEFAULT ''");
         }
       },
     );
@@ -217,7 +245,8 @@ class LocalStore {
         library_id INTEGER,
         label TEXT NOT NULL DEFAULT '',
         custom_text TEXT NOT NULL DEFAULT '',
-        applied_at TEXT NOT NULL
+        applied_at TEXT NOT NULL,
+        last_error TEXT NOT NULL DEFAULT ''
       )''');
     await db.execute('''
       CREATE TABLE IF NOT EXISTS records (
@@ -253,10 +282,22 @@ class LocalStore {
   }
 
   /// The last saved answer for [key], or null if there never was one.
-  Future<Object?> getCache(String key) async {
+  Future<Object?> getCache(String key) async => (await getCacheEntry(key))?.data;
+
+  /// The last saved answer for [key] with the time it was saved.
+  Future<CacheEntry?> getCacheEntry(String key) async {
     final db = await _open();
     final rows = await db.query('cache', where: 'key = ?', whereArgs: [key]);
-    return rows.isEmpty ? null : jsonDecode(rows.first['json'] as String);
+    if (rows.isEmpty) return null;
+    return CacheEntry(
+      jsonDecode(rows.first['json'] as String),
+      DateTime.tryParse(rows.first['saved_at'] as String? ?? '') ?? DateTime.now(),
+    );
+  }
+
+  Future<void> removeCache(String key) async {
+    final db = await _open();
+    await db.delete('cache', where: 'key = ?', whereArgs: [key]);
   }
 
   // ---------------------------------------------------------------- outbox
@@ -300,17 +341,26 @@ class LocalStore {
     await db.delete('treatment_outbox', where: 'client_uuid = ?', whereArgs: [clientUuid]);
   }
 
+  /// '' clears the error (the person asked to try again).
+  Future<void> setTreatmentError(String clientUuid, String error) async {
+    final db = await _open();
+    await db.update('treatment_outbox', {'last_error': error}, where: 'client_uuid = ?', whereArgs: [clientUuid]);
+  }
+
   Future<List<OutboxTreatment>> pendingTreatments() async {
     final db = await _open();
     final rows = await db.query('treatment_outbox', orderBy: 'id ASC');
     return rows.map(OutboxTreatment.fromMap).toList();
   }
 
-  Future<bool> hasPendingWork() async {
+  Future<bool> hasPendingWork() async => (await pendingCounts()).total > 0;
+
+  /// How many observations and treatments are still on this phone only.
+  Future<PendingCounts> pendingCounts() async {
     final db = await _open();
     final a = Sqflite.firstIntValue(await db.rawQuery('SELECT COUNT(*) FROM outbox')) ?? 0;
     final b = Sqflite.firstIntValue(await db.rawQuery('SELECT COUNT(*) FROM treatment_outbox')) ?? 0;
-    return a + b > 0;
+    return PendingCounts(a, b);
   }
 
   // ---------------------------------------------------------------- records
@@ -356,6 +406,7 @@ class LocalStore {
     String? serverPhoto;
     await db.transaction((txn) async {
       await txn.delete('records', where: 'server_id = ?', whereArgs: [serverId]);
+      await txn.delete('cache', where: 'key = ?', whereArgs: ['record_$serverId']);
       if (uuid != null) {
         final photo = await txn.query('photos', where: 'client_uuid = ?', whereArgs: [uuid]);
         final path = photo.isEmpty ? null : photo.first['image_path'] as String?;
@@ -426,6 +477,22 @@ class LocalStore {
       } catch (e) {
         debugPrint('Could not delete photo: $e');
       }
+    }
+    await clearSavedMaps();
+  }
+
+  /// Map and spread answers saved by the Local map screen (kept in
+  /// SharedPreferences, not SQLite), so the next account never sees them.
+  static bool isSavedMapKey(String key) => key.startsWith('local_map_') || key.startsWith('local_spread_');
+
+  static Future<void> clearSavedMaps() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      for (final k in prefs.getKeys().where(isSavedMapKey).toList()) {
+        await prefs.remove(k);
+      }
+    } catch (e) {
+      debugPrint('Could not clear saved maps: $e');
     }
   }
 }

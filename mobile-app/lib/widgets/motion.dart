@@ -503,8 +503,12 @@ class SkeletonList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Placeholder rows are cut off (not overflowing) when the space is short,
+    // e.g. a small phone with large text.
     return Shimmer(
-      child: Column(
+      child: SingleChildScrollView(
+        physics: const NeverScrollableScrollPhysics(),
+        child: Column(
         children: [
           for (var i = 0; i < rows; i++)
             Padding(
@@ -514,6 +518,7 @@ class SkeletonList extends StatelessWidget {
                   : const SkeletonRow(),
             ),
         ],
+        ),
       ),
     );
   }

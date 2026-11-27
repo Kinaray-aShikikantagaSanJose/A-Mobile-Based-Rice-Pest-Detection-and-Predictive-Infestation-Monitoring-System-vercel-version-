@@ -98,6 +98,9 @@ class TreatmentInfo {
   /// Logged on the phone, not yet on the server.
   final bool pending;
 
+  /// Why the server refused it (pending only); '' = waiting for signal.
+  final String error;
+
   const TreatmentInfo({
     this.id,
     required this.clientUuid,
@@ -108,6 +111,7 @@ class TreatmentInfo {
     this.followUpScanId,
     this.followUpSetBy,
     this.pending = false,
+    this.error = '',
   });
 
   factory TreatmentInfo.fromJson(Map<String, dynamic> j) => TreatmentInfo(
@@ -135,7 +139,46 @@ class TreatmentOption {
   final String title;
   final String description;
   final String sourceReference;
-  const TreatmentOption(this.id, this.type, this.title, this.description, this.sourceReference);
+
+  /// The reviewer recommended this option for this record.
+  final bool recommended;
+  const TreatmentOption(this.id, this.type, this.title, this.description, this.sourceReference,
+      [this.recommended = false]);
+}
+
+/// An approved library option the reviewer recommended for this record.
+/// A recommendation, not something the farmer applied (see [TreatmentInfo]).
+class RecommendedOption {
+  final int? libraryId;
+  final String title, optionType, description, sourceReference;
+  final String recommendedByRole, recommendedByName, createdAt;
+
+  /// False when the option has since left the approved library.
+  final bool stillApproved;
+
+  const RecommendedOption({
+    this.libraryId,
+    required this.title,
+    this.optionType = '',
+    this.description = '',
+    this.sourceReference = '',
+    this.recommendedByRole = '',
+    this.recommendedByName = '',
+    this.createdAt = '',
+    this.stillApproved = true,
+  });
+
+  factory RecommendedOption.fromJson(Map<String, dynamic> j) => RecommendedOption(
+        libraryId: _i(j['library_id']),
+        title: _s(j['title']),
+        optionType: _s(j['option_type']),
+        description: _s(j['description']),
+        sourceReference: _s(j['source_reference']),
+        recommendedByRole: _s(j['recommended_by_role']),
+        recommendedByName: _s(j['recommended_by_name']),
+        createdAt: _s(j['created_at']),
+        stillApproved: j['still_approved'] != false,
+      );
 }
 
 /// Approved options for a validated record, grouped by type
@@ -151,7 +194,7 @@ class Recommendations {
       groups['$type'] = [
         for (final o in (list as List))
           TreatmentOption(_i((o as Map)['id']) ?? 0, '$type', _s(o['title']), _s(o['description']),
-              _s(o['source_reference'])),
+              _s(o['source_reference']), o['recommended'] == true),
       ];
     });
     return Recommendations(groups, _s(j['chemical_note']), [
@@ -171,12 +214,16 @@ class HistoryEntry {
   final String action, reviewer, reviewerRole, note, createdAt;
   final String? pest, level;
   final int? count;
+
+  /// The reviewer's own note (staff only), and the texts sent to the farmer.
+  final String reviewerNote, diagnosis, guidance;
   const HistoryEntry(this.action, this.reviewer, this.reviewerRole, this.note, this.createdAt, this.pest,
-      this.level, this.count);
+      this.level, this.count, {this.reviewerNote = '', this.diagnosis = '', this.guidance = ''});
 
   factory HistoryEntry.fromJson(Map<String, dynamic> j) => HistoryEntry(_s(j['action']), _s(j['reviewer']),
       _s(j['reviewer_role']), _s(j['note']), _s(j['created_at']), j['pest'] as String?, j['level'] as String?,
-      _i(j['count']));
+      _i(j['count']),
+      reviewerNote: _s(j['reviewer_note']), diagnosis: _s(j['diagnosis']), guidance: _s(j['guidance']));
 }
 
 /// An observation: either still on the phone ([pending]) or the server's copy.
@@ -223,6 +270,28 @@ class Record {
 
   /// Why it is in an agriculturist's queue: 'escalated' or 'no_technician'.
   String get queueReason => _s(server?['queue_reason']);
+
+  /// 'not_validated' (pending, initial review), 'to_be_validated'
+  /// (escalated to an agriculturist) or '' (not in a queue).
+  String get queue => _s(server?['queue']);
+
+  /// '' | 'relevant' | 'possibly_unrelated' (the photo may not show a rice
+  /// plant or field; a technician checks it. Not the same as "no pests").
+  String get imageRelevance => _s(server?['image_relevance']);
+  bool get possiblyUnrelated => imageRelevance == 'possibly_unrelated';
+
+  /// Who last changed the land type, and when ('' = never changed).
+  String get landTypeUpdatedBy => _s(server?['land_type_updated_by']);
+  String get landTypeUpdatedAt => _s(server?['land_type_updated_at']);
+
+  /// The submitter may still correct the land type (before review).
+  bool get landTypeEditableByOwner => uploaded && isMine && (status == 'pending' || status == 'returned');
+
+  /// Approved options the reviewer recommended (not what was applied).
+  List<RecommendedOption> get recommended => [
+        for (final o in (server?['recommended'] as List? ?? const []))
+          if (o is Map) RecommendedOption.fromJson(o.cast<String, dynamic>()),
+      ];
   String get status => server != null ? _s(server!['status']) : '';
   String get municipality => _s(server?['municipality']);
   String get barangay => _s(server?['barangay']);

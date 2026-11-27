@@ -172,8 +172,9 @@ export const OPTION_TYPES = [
 export const REVIEW_ACTIONS = {
   validated: 'Validated',
   returned: 'Returned to farmer',
-  escalated: 'Escalated',
+  escalated: 'Escalated to To Be Validated',
   diagnosis: 'Diagnosis recorded',
+  land_type_changed: 'Land type corrected',
 };
 
 // Same list as the mobile registration screen.

@@ -11,6 +11,7 @@ import 'parts/observe.dart';
 import 'parts/profile.dart';
 import 'parts/records.dart';
 import 'parts/server.dart';
+import 'parts/update.dart';
 
 final Map<String, Map<String, String>> kStrings = {
   ...kServerStrings,
@@ -23,4 +24,5 @@ final Map<String, Map<String, String>> kStrings = {
   ...kFieldStrings,
   ...kMapsStrings,
   ...kCameraStrings,
+  ...kUpdateStrings,
 };

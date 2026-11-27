@@ -51,7 +51,7 @@ class _F21MyRecordsState extends State<F21MyRecords> {
   }
 
   Future<void> _refresh() async {
-    await SyncService.syncAll();
+    await SyncService.syncAll(force: true);
     await _load();
   }
 
@@ -148,11 +148,13 @@ class _F21MyRecordsState extends State<F21MyRecords> {
                                       AppSpacing.hPad, AppSpacing.md, AppSpacing.hPad, AppSpacing.xl),
                                   itemCount: shown.length,
                                   separatorBuilder: (_, _) => const SizedBox(height: AppSpacing.md),
-                                  itemBuilder: (context, i) => FadeSlideIn(
-                                    index: i,
-                                    child: RecordTile(
-                                      record: shown[i],
-                                      onTap: () => context.push(AppRouter.record, extra: shown[i]),
+                                  itemBuilder: (context, i) => MaxContentWidth(
+                                    child: FadeSlideIn(
+                                      index: i,
+                                      child: RecordTile(
+                                        record: shown[i],
+                                        onTap: () => context.push(AppRouter.record, extra: shown[i]),
+                                      ),
                                     ),
                                   ),
                                 ),

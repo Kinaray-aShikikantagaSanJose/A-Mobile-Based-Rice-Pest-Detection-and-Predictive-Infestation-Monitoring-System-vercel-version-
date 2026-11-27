@@ -118,8 +118,8 @@ export default function HotspotMap({
         })
           .bindTooltip(
             `<b>${esc(h.barangay)}</b>, ${esc(h.municipality)}<br/>` +
-              `${esc(t('Highest level:'))} <b>${esc(h.level)}</b> · ${esc(h.records === 1 ? t('{n} record', { n: h.records }) : t('{n} records', { n: h.records }))}<br/>` +
-              `${esc(h.pests.join(', '))}<br/>${esc(t('Latest: {date}', { date: fmtDate(h.latest) }))}`,
+              `${esc(t('Highest level:'))} <b>${esc(t(h.level))}</b> · ${esc(h.records === 1 ? t('{n} record', { n: h.records }) : t('{n} records', { n: h.records }))}<br/>` +
+              `${esc(h.pests.map((p) => t(p)).join(', '))}<br/>${esc(t('Latest: {date}', { date: fmtDate(h.latest) }))}`,
             { sticky: true },
           )
           .addTo(layer);
@@ -205,7 +205,7 @@ export default function HotspotMap({
             {Object.entries(LEVEL_COLOR).map(([k, v]) => (
               <span key={k} className="flex items-center gap-2 rounded-full border border-line bg-white px-3 py-1.5 font-bold text-ink shadow-sm">
                 <span className="inline-block h-5 w-5 rounded-full ring-2 ring-white" style={{ background: v, boxShadow: `0 0 0 1px ${v}` }} />
-                {k}
+                {t(k)}
               </span>
             ))}
             <span className="flex items-center gap-2 rounded-full border border-line bg-white px-3 py-1.5 shadow-sm">

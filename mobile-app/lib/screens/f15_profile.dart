@@ -12,7 +12,7 @@ import '../utils/places.dart';
 import '../widgets/app_widgets.dart';
 import '../widgets/barangay_field.dart';
 import '../widgets/gps_area.dart';
-import '../widgets/language_button.dart';
+import '../widgets/language_button.dart' show showLanguagePicker;
 import '../widgets/user_avatar.dart';
 
 final RegExp _phone = RegExp(r'^\+?[0-9][0-9 \-]{5,28}$');
@@ -304,6 +304,15 @@ class _F15ProfileState extends State<F15Profile> {
   }
 
   Future<void> _removePicture() async {
+    final ok = await confirmAction(
+      context,
+      title: context.tr('Remove your profile picture?'),
+      message: context.tr('Your initials are shown instead. You can add a new picture any time.'),
+      confirmLabel: context.tr('Remove picture'),
+      icon: Icons.delete_outline_rounded,
+      color: AppColors.danger,
+    );
+    if (!ok || !mounted) return;
     setState(() => _uploading = true);
     try {
       await ApiClient.applyProfile(await ApiClient.delete('/auth/me/avatar'));
@@ -328,7 +337,8 @@ class _F15ProfileState extends State<F15Profile> {
           padding: EdgeInsets.zero,
           children: [
             _header(s),
-            Padding(
+            MaxContentWidth(
+              child: Padding(
               padding: const EdgeInsets.fromLTRB(AppSpacing.hPad, AppSpacing.lg, AppSpacing.hPad, AppSpacing.xxl),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -348,6 +358,7 @@ class _F15ProfileState extends State<F15Profile> {
                   ),
                 ],
               ),
+            ),
             ),
           ],
         ),
@@ -377,11 +388,13 @@ class _F15ProfileState extends State<F15Profile> {
                   children: [
                     AppCircleButton(icon: Icons.arrow_back_rounded, tooltip: context.tr('Back'), dark: true, onTap: () => popOrGoHome(context)),
                     const SizedBox(width: AppSpacing.md),
+                    // The language is changed in the Language card below (one control per screen).
                     Expanded(
                       child: Text(context.tr('My profile'),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: const TextStyle(fontFamily: AppFonts.display, color: Colors.white, fontSize: 20, fontWeight: FontWeight.w800)),
                     ),
-                    const LanguageButton(dark: true),
                   ],
                 ),
                 const SizedBox(height: AppSpacing.md),
@@ -426,7 +439,9 @@ class _F15ProfileState extends State<F15Profile> {
                   textAlign: TextAlign.center,
                   style: const TextStyle(fontFamily: AppFonts.display, color: Colors.white, fontSize: 22, fontWeight: FontWeight.w800),
                 ),
-                Text(s?.email ?? '', style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 13.5)),
+                Text(s?.email ?? '',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 13.5)),
                 const SizedBox(height: AppSpacing.sm),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -440,7 +455,12 @@ class _F15ProfileState extends State<F15Profile> {
                     children: [
                       Icon(_isTech ? Icons.engineering_rounded : Icons.agriculture_rounded, size: 15, color: AppColors.brandGold),
                       const SizedBox(width: 6),
-                      Text(roleLabel, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 12.5)),
+                      Flexible(
+                        child: Text(roleLabel,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 12.5)),
+                      ),
                     ],
                   ),
                 ),
@@ -661,7 +681,9 @@ class _CardTitle extends StatelessWidget {
         children: [
           IconTile(icon: icon, color: color, size: 38, filled: true),
           const SizedBox(width: AppSpacing.md),
-          Text(title, style: const TextStyle(fontFamily: AppFonts.display, fontSize: 17, fontWeight: FontWeight.w800)),
+          Flexible(
+            child: Text(title, style: const TextStyle(fontFamily: AppFonts.display, fontSize: 17, fontWeight: FontWeight.w800)),
+          ),
         ],
       );
 }

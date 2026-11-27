@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import List, Literal, Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy import text
@@ -72,9 +72,12 @@ def _record_for_owner(db: Session, scan_id: int, viewer: dict) -> dict:
         raise HTTPException(status_code=404, detail="Observation not found.")
     rec = obs.shape(row, staff=staff_view)
     rec["treatments"] = obs.treatments_for(db, [row.id]).get(row.id, [])
+    # What the reviewer recommended (from the approved library) is kept apart
+    # from what the farmer applied (rec["treatments"]).
+    rec["recommended"] = obs.reviewer_recommendations(db, row.id) if row.validation_status == "validated" else []
     rec["recommendations"] = (
         obs.recommendations(db, row.confirmed_pest, row.crop_phase or "", row.infestation_level,
-                            owner_email=row.user_email)
+                            owner_email=row.user_email, recommended=rec["recommended"])
         if rec["confirmed"] else None
     )
     rec["is_mine"] = row.user_email == viewer["email"]
@@ -164,14 +167,17 @@ def submit_observation(
     except Exception:
         raise HTTPException(status_code=503, detail="The photo could not be stored right now. Please try again.")
 
-    # The model runs here, after upload, and only for pest reports.
+    # The model runs here, after upload, and only for pest reports. Every
+    # photo also gets the relevance screen (a disease photo should show plants too).
     ai = detector.analyze(photo) if report_type == "pest" else None
+    relevance = (ai or {}).get("metadata", {}).get("relevance") if ai else detector.screen_only(photo)
     if gps_accuracy is not None and not (0 <= gps_accuracy <= 100000):
         gps_accuracy = None
     try:
         row = _insert_scan(db, user, filename, notes, lat, lng, created_at, client_uuid, report_type,
                            crop_stage, monitoring_method, trap_type, target_pest, target_sex,
-                           follow_up_of, resubmission_of, ai, land_type, elevation_m, gps_accuracy)
+                           follow_up_of, resubmission_of, ai, land_type, elevation_m, gps_accuracy,
+                           relevance)
     except IntegrityError:
         # A retry that raced the first upload (slow signal): keep the first copy.
         db.rollback()
@@ -215,8 +221,12 @@ def _drop_pest_free_photo(db: Session, scan_id: int, filename: str) -> None:
 
 def _insert_scan(db, user, filename, notes, lat, lng, created_at, client_uuid, report_type, crop_stage,
                  monitoring_method, trap_type, target_pest, target_sex, follow_up_of, resubmission_of, ai,
-                 land_type="", elevation_m=None, gps_accuracy=None):
+                 land_type="", elevation_m=None, gps_accuracy=None, relevance=None):
     trap = report_type == "pest" and monitoring_method == "trap"
+    # supabase/03_2026_12_update.sql: the relevance screen's answer.
+    with_relevance = schema.relevance_ready(db) and relevance is not None
+    rel_cols = ", image_relevance" if with_relevance else ""
+    rel_vals = ", :relevance" if with_relevance else ""
     # Stored once sql/011 has run; until then the land type is accepted but not kept.
     with_land = schema.land_type_ready(db)
     land_cols = ", land_type, elevation_m" if with_land else ""
@@ -252,7 +262,7 @@ def _insert_scan(db, user, filename, notes, lat, lng, created_at, client_uuid, r
                                target_sex, symptoms, municipality, barangay, submitted_by_role,
                                follow_up_of, resubmission_of, ai_status, ai_pest, ai_confidence, ai_count,
                                ai_countable, ai_detections, ai_message,
-                               total_count, dominant_class, validation_status{land_cols}{det_cols}{loc_cols})
+                               total_count, dominant_class, validation_status{land_cols}{det_cols}{loc_cols}{rel_cols})
             VALUES (:email, :filename, :notes,
                     CASE WHEN CAST(:lat AS double precision) IS NULL THEN NULL
                          ELSE ST_SetSRID(ST_MakePoint(:lng, :lat), 4326) END,
@@ -260,7 +270,7 @@ def _insert_scan(db, user, filename, notes, lat, lng, created_at, client_uuid, r
                     :target_sex, :symptoms, :area, :brgy, :role, :follow_up, :resubmission_of,
                     :ai_status, :ai_pest, :ai_conf, :ai_count, :ai_countable,
                     CAST(:ai_detections AS jsonb), :ai_message,
-                    :total, :dominant, :status{land_vals}{det_vals}{loc_vals})
+                    :total, :dominant, :status{land_vals}{det_vals}{loc_vals}{rel_vals})
             RETURNING id, validation_status, {ret_det} AS detection_result, {ret_loc} AS location_status
             """
         ),
@@ -290,7 +300,9 @@ def _insert_scan(db, user, filename, notes, lat, lng, created_at, client_uuid, r
             "elevation_m": elevation_m,
             "status": "no_pests" if no_pests else "pending",
             "det_result": result,
-            "det_meta": json.dumps({**((ai or {}).get("metadata") or {}), "image_deleted": False}),
+            "det_meta": json.dumps({**((ai or {}).get("metadata") or {}), "relevance": relevance,
+                                    "image_deleted": False}),
+            "relevance": (relevance or {}).get("status", ""),
             "loc_status": loc.get("status", ""),
             "gps_brgy": loc.get("barangay_psgc"),
             "gps_mun": loc.get("municipality_psgc"),
@@ -333,6 +345,8 @@ def observation_detail(
                 "reviewer_role": h.reviewer_role,
                 "pest": h.pest, "count": h.corrected_count, "countable": h.countable,
                 "level": h.level, "note": h.note or h.diagnosis, "created_at": obs._iso(h.created_at),
+                "reviewer_note": getattr(h, "reviewer_note", "") or "",
+                "diagnosis": h.diagnosis or "", "guidance": h.guidance or "",
             }
             for h in db.execute(
                 text("SELECT r.*, u.full_name AS reviewer_name FROM scan_reviews r "
@@ -519,13 +533,23 @@ def mark_read(
 
 @router.get("/queue")
 def review_queue(
+    response: Response,
     kind: Literal["pest", "disease"] = "pest",
+    queue: Literal["", "not_validated", "to_be_validated"] = "",
+    limit: Optional[int] = Query(None, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_geo_db),
     user: dict = Depends(require_role(*STAFF)),
 ):
-    """Technicians: pending observations in their coverage area, oldest first.
-    Agriculturists: escalated cases, plus pending observations from places no
-    technician covers (so nothing waits forever unseen)."""
+    """Technicians: the "Not Validated" queue (pending observations in their
+    coverage area), oldest first. Agriculturists: the "To Be Validated" queue
+    (escalated cases) plus "Not Validated" observations from places no
+    technician covers (so nothing waits forever unseen).
+
+    Every item carries `queue` (not_validated | to_be_validated). `queue`
+    filters to one of them; `limit`/`offset` page the list (oldest first,
+    id as tie-breaker) and X-Total-Count gives the full size. Without
+    `limit` the whole list is returned (older app builds)."""
     params: dict = {"kind": kind}
     if user["role"] == TECHNICIAN:
         scope = obs.scope_sql(user, params)
@@ -535,36 +559,51 @@ def review_queue(
         where = "s.validation_status = 'pending' AND s.report_type = :kind AND " + (
             f"({scope} OR {mine})" if scope else mine
         )
-        rows = db.execute(text(f"{obs.SELECT} WHERE {where} ORDER BY s.created_at ASC, s.id ASC"), params).fetchall()
-        return [{**obs.shape(r, staff=True), "queue_reason": "pending"} for r in rows]
-
-    rows = db.execute(
-        text(f"{obs.SELECT} WHERE s.validation_status IN ('escalated', 'pending') AND s.report_type = :kind "
-             "ORDER BY s.created_at ASC, s.id ASC"),
-        params,
-    ).fetchall()
-    coverage = obs.technician_coverage(db)
-    out = []
-    for r in rows:
-        if r.validation_status == "escalated":
-            out.append({**obs.shape(r, staff=True), "queue_reason": "escalated"})
-        elif not obs.has_technician(coverage, r.area, r.brgy):
-            out.append({**obs.shape(r, staff=True), "queue_reason": "no_technician"})
-    return out
+        rows = [] if queue == obs.QUEUE_TO_BE_VALIDATED else db.execute(
+            text(f"{obs.SELECT} WHERE {where} ORDER BY s.created_at ASC, s.id ASC"), params).fetchall()
+        out = [{**obs.shape(r, staff=True), "queue_reason": "pending"} for r in rows]
+    else:
+        statuses = {"": ("escalated", "pending"), obs.QUEUE_TO_BE_VALIDATED: ("escalated",),
+                    obs.QUEUE_NOT_VALIDATED: ("pending",)}[queue]
+        params["statuses"] = list(statuses)
+        rows = db.execute(
+            text(f"{obs.SELECT} WHERE s.validation_status = ANY(:statuses) AND s.report_type = :kind "
+                 "ORDER BY s.created_at ASC, s.id ASC"),
+            params,
+        ).fetchall()
+        coverage = obs.technician_coverage(db)
+        out = []
+        for r in rows:
+            if r.validation_status == "escalated":
+                out.append({**obs.shape(r, staff=True), "queue_reason": "escalated"})
+            elif not obs.has_technician(coverage, r.area, r.brgy):
+                out.append({**obs.shape(r, staff=True), "queue_reason": "no_technician"})
+    response.headers["X-Total-Count"] = str(len(out))
+    response.headers["Access-Control-Expose-Headers"] = "X-Total-Count"
+    return out[offset:offset + limit] if limit else out[offset:]
 
 
 @router.get("/level-suggestion")
 def level_suggestion(
+    request: Request,
     pest: str,
     crop_stage: str = "",
     count: Optional[int] = None,
     indicators: str = "",
+    lang: str = "",
     db: Session = Depends(get_geo_db),
     user: dict = Depends(require_role(*STAFF)),
 ):
+    """Suggested level with its reasons in the requested language (?lang= or
+    X-Palay-Language, else the account's language). `available_indicators`
+    stay in English: they are the values sent back on validation; apps show
+    `indicator_labels` instead."""
+    language = i18n.request_language(request, user, lang)
     chosen = [i for i in indicators.split("|") if i]
-    result = levels.suggest(levels.load_thresholds(db), pest, crop_stage, count, chosen)
-    return {**result, "available_indicators": levels.indicators_for(pest)}
+    result = levels.suggest(levels.load_thresholds(db), pest, crop_stage, count, chosen, lang=language)
+    available = levels.indicators_for(pest)
+    return {**result, "available_indicators": available,
+            "indicator_labels": {i: i18n.t(i, language) for i in available}, "language": language}
 
 
 class ReviewIn(BaseModel):
@@ -584,6 +623,13 @@ class ReviewIn(BaseModel):
     guidance: str = Field("", max_length=4000)
     # return / escalate
     reason: str = Field("", max_length=1000)
+    # validate: the reviewer's own note on what was checked and why (kept in
+    # the review history; not shown to the farmer as advice). Required once
+    # supabase/03_2026_12_update.sql has run; must differ from diagnosis/guidance.
+    reviewer_note: str = Field("", max_length=2000)
+    # validate, pest report: options picked from the APPROVED treatment library
+    # for this pest. They are recommendations, not treatments applied.
+    recommended_library_ids: List[int] = Field(default_factory=list, max_length=10)
 
 
 @router.post("/scans/{scan_id}/review")
@@ -607,17 +653,20 @@ def review(
     notify_owner = row.user_email != user["email"]
     reason = payload.reason.strip()
     diagnosis, guidance = payload.diagnosis.strip(), payload.guidance.strip()
+    reviewer_note = " ".join(payload.reviewer_note.split())
 
     if payload.action == "return":
         # Photo unclear: the farmer retakes it and the new photo goes through again.
         if not reason:
             raise HTTPException(status_code=400, detail="Tell the farmer why (e.g. photo too blurry).")
+        if not obs.meaningful(reason, 6):
+            raise HTTPException(status_code=400, detail="Write a clear reason the farmer can act on.")
         db.execute(
             text("UPDATE scans SET validation_status = 'returned', return_reason = :r, "
                  "validated_by = :by, validated_at = now() WHERE id = :i"),
             {"r": reason, "by": user["email"], "i": scan_id},
         )
-        obs.log_review(db, scan_id, user, "returned", note=reason)
+        obs.log_review(db, scan_id, user, "returned", note=reason, reviewer_note=reviewer_note or reason)
         if notify_owner:
             obs.notify_t(db, row.user_email, scan_id, "returned", "returned.title", body_text=reason)
         activity.log(db, "observation_reviewed", target_type="scan", target_id=scan_id,
@@ -630,12 +679,14 @@ def review(
             raise HTTPException(status_code=400, detail="Agriculturists resolve escalations; they can't escalate.")
         if not reason:
             raise HTTPException(status_code=400, detail="Say why it needs an agriculturist.")
+        if not obs.meaningful(reason, 10):
+            raise HTTPException(status_code=400, detail="Explain the escalation in a sentence the agriculturist can use.")
         db.execute(
             text("UPDATE scans SET validation_status = 'escalated', escalation_reason = :r, "
                  "validated_by = :by, validated_at = now() WHERE id = :i"),
             {"r": reason, "by": user["email"], "i": scan_id},
         )
-        obs.log_review(db, scan_id, user, "escalated", note=reason)
+        obs.log_review(db, scan_id, user, "escalated", note=reason, reviewer_note=reviewer_note or reason)
         if notify_owner:
             obs.notify_t(db, row.user_email, scan_id, "escalated", "escalated.title", "escalated.body")
         activity.log(db, "observation_reviewed", target_type="scan", target_id=scan_id,
@@ -648,6 +699,18 @@ def review(
         raise HTTPException(status_code=400, detail="Confirm the infestation level.")
     if escalated and (not diagnosis or not guidance):
         raise HTTPException(status_code=400, detail="Record the diagnosis and the guidance for the farmer.")
+    if schema.reviewer_note_ready(db):
+        if not obs.meaningful(reviewer_note):
+            raise HTTPException(status_code=400,
+                                detail="Add a reviewer note: what you checked and why you chose this level.")
+        if reviewer_note.lower() in {diagnosis.lower(), guidance.lower()}:
+            raise HTTPException(status_code=400,
+                                detail="The reviewer note must be your own note, not a copy of the diagnosis or guidance.")
+    rec_ids = list(dict.fromkeys(payload.recommended_library_ids))
+    if rec_ids and not is_pest:
+        raise HTTPException(status_code=400, detail="Treatment options can only be recommended for pest reports.")
+    if rec_ids and not schema.recommendations_ready(db):
+        raise HTTPException(status_code=503, detail="Recommendations need a database update first.")
 
     if is_pest:
         pest = payload.pest
@@ -657,6 +720,14 @@ def review(
         if payload.countable and count is None:
             raise HTTPException(status_code=400, detail="Enter the count, or mark it not countable.")
         indicators = [i for i in payload.damage_indicators if i in levels.indicators_for(pest)]
+        if rec_ids:
+            ok = {r.id for r in db.execute(
+                text("SELECT id FROM treatment_library WHERE id = ANY(:ids) AND status = 'approved' AND pest = :p"),
+                {"ids": rec_ids, "p": pest},
+            ).fetchall()}
+            if set(rec_ids) - ok:
+                raise HTTPException(status_code=400,
+                                    detail="Recommend only approved library options for the confirmed pest.")
         suggestion = levels.suggest(levels.load_thresholds(db), pest, row.crop_phase or "", count, indicators)
         db.execute(
             text(
@@ -684,10 +755,19 @@ def review(
             changes.append("marked not countable" if count is None else f"count set to {count}")
         if payload.level != suggestion["level"]:
             changes.append(f"level {payload.level} (suggested {suggestion['level']})")
-        obs.log_review(db, scan_id, user, "validated", pest=pest, count=count, countable=count is not None,
-                       level=payload.level, indicators=indicators, diagnosis=diagnosis, guidance=guidance,
-                       note="; ".join(changes) or "confirmed the model result")
-        note_keys = ("validated.title", "validated.body_guidance" if guidance else "validated.body", None)
+        review_id = obs.log_review(db, scan_id, user, "validated", pest=pest, count=count,
+                                   countable=count is not None, level=payload.level, indicators=indicators,
+                                   diagnosis=diagnosis, guidance=guidance, reviewer_note=reviewer_note,
+                                   note="; ".join(changes) or "confirmed the model result")
+        for lib in rec_ids:
+            db.execute(
+                text("INSERT INTO scan_recommendations (scan_id, library_id, recommended_by, recommended_by_role, "
+                     "review_id) VALUES (:s, :l, :by, :role, :rid) ON CONFLICT (scan_id, library_id) DO NOTHING"),
+                {"s": scan_id, "l": lib, "by": user["email"], "role": user["role"], "rid": review_id},
+            )
+        body_key = ("validated.body_recommended" if rec_ids
+                    else "validated.body_guidance" if guidance else "validated.body")
+        note_keys = ("validated.title", body_key, None)
         note_params = {"pest": obs.pest_name(pest), "level": payload.level}
     else:  # disease report: no model result; the level is confirmed, diagnosis optional unless escalated
         db.execute(
@@ -704,7 +784,8 @@ def review(
             {"level": payload.level, "diag": diagnosis, "guid": guidance, "by": user["email"], "i": scan_id},
         )
         obs.log_review(db, scan_id, user, "validated", level=payload.level, diagnosis=diagnosis,
-                       guidance=guidance, note=f"disease report, {payload.level.lower()} level")
+                       guidance=guidance, reviewer_note=reviewer_note,
+                       note=f"disease report, {payload.level.lower()} level")
         note_keys = ("disease.title_diagnosis" if diagnosis else "disease.title_level",
                      None if diagnosis else "disease.body", diagnosis or None)
         note_params = {"level": payload.level}
@@ -714,7 +795,60 @@ def review(
                      title_key, body_key, body_text, **note_params)
     activity.log(db, "observation_reviewed", target_type="scan", target_id=scan_id,
                  details={"decision": "validated", "level": payload.level,
-                          "pest": payload.pest if is_pest else None})
+                          "pest": payload.pest if is_pest else None, "recommended": rec_ids})
+    db.commit()
+    return _record_for_owner(db, scan_id, user)
+
+
+# ---------------------------------------------------------------- land type correction
+
+class LandTypeIn(BaseModel):
+    land_type: Literal["upland", "rainfed_lowland", "irrigated_lowland"]
+    reason: str = Field("", max_length=500)
+
+
+@router.patch("/scans/{scan_id}/land-type")
+def correct_land_type(
+    scan_id: int,
+    payload: LandTypeIn,
+    db: Session = Depends(get_geo_db),
+    user: dict = Depends(require_role(*EVERYONE)),
+):
+    """Correct the land type of one observation.
+    Who may: the submitter while the observation is not yet reviewed
+    (pending / returned); a technician for observations in their coverage
+    area (and their own); an agriculturist for any. Every change is kept in
+    the review history (action land_type_changed) and the activity log."""
+    if not schema.land_type_ready(db):
+        raise HTTPException(status_code=503, detail="This needs a database update first.")
+    row = obs.load(db, scan_id)
+    if row is None:
+        _not_found(db, scan_id, user)
+    is_owner = row.user_email == user["email"]
+    if user["role"] in STAFF:
+        allowed = is_owner or obs.in_scope(user, row.area, row.brgy)
+    else:
+        allowed = is_owner and row.validation_status in ("pending", "returned")
+    if not allowed:
+        if is_owner:
+            raise HTTPException(status_code=403,
+                                detail="The land type can't be changed after review. Ask your technician.")
+        raise HTTPException(status_code=404, detail="Observation not found.")
+    old = getattr(row, "land_type", "") or ""
+    if old == payload.land_type:
+        return _record_for_owner(db, scan_id, user)
+    audit = schema.land_type_audit_ready(db)
+    db.execute(
+        text("UPDATE scans SET land_type = :lt"
+             + (", land_type_updated_by = :by, land_type_updated_at = now()" if audit else "")
+             + " WHERE id = :i"),
+        {"lt": payload.land_type, "by": user["email"], "i": scan_id},
+    )
+    note = f"land type: {land.label(old)} -> {land.label(payload.land_type)}"
+    obs.log_review(db, scan_id, user, "land_type_changed", note=note,
+                   reviewer_note=" ".join(payload.reason.split()))
+    activity.log(db, "land_type_changed", target_type="scan", target_id=scan_id,
+                 details={"from": old, "to": payload.land_type, "reason": payload.reason.strip()})
     db.commit()
     return _record_for_owner(db, scan_id, user)
 

@@ -3,7 +3,7 @@ import { api } from '../api.js';
 import HotspotMap, { SPREAD_COLORS } from '../components/HotspotMap.jsx';
 import RecordDrawer from '../components/RecordDrawer.jsx';
 import { Button, Empty, ErrorNote, Field, LEVEL_COLOR, LevelBadge, Loading, Notice, Panel, PageHeader, Segmented, Select, Stat, Table } from '../components/ui.jsx';
-import { useT } from '../i18n/index.jsx';
+import { useI18n, useT } from '../i18n/index.jsx';
 import { CROP_STAGES, fmtDate, fmtNum, LAND_TYPES, LEVELS, useAsync } from '../lib.js';
 import { filterSample, samplePoints } from '../sampleMapData.js';
 
@@ -12,6 +12,8 @@ const SPREAD_WINDOWS = [
   [7, 'Week to week'],
   [14, '2 weeks'],
   [30, '30 days'],
+  // The From-To dates of the filters, split into two halves.
+  ['custom', 'From-To dates'],
 ];
 
 /** Active hotspots by highest level, e.g. on the home summary row. */
@@ -44,22 +46,37 @@ function Arrow({ bearing, color }) {
   );
 }
 
-/** Directional spread per pest: the label, dates, records used, and the required note. */
-function SpreadPanel({ res, windowDays, onWindow, sample }) {
+/**
+ * Directional spread per pest: barangay-level summary ("Northeast — from
+ * Brgy. X to Brgy. Y", or "cannot be determined"), the observation period,
+ * case counts per period, and the server's note. Texts come from the server
+ * in the dashboard language.
+ */
+function SpreadPanel({ res, windowDays, onWindow, sample, needsDates }) {
   const t = useT();
-  const d = res.data;
+  const d = needsDates ? null : res.data;
   return (
     <Panel
       className="mt-6"
       title={t('Directional spread')}
       subtitle={
         d
-          ? `${d.windows[0].name}: ${d.windows[0].label} · ${d.windows[1].name}: ${d.windows[1].label} · ${t('needs at least {n} validated records with a location in each', { n: d.min_records })}`
-          : t('Where validated cases cluster in two consecutive windows')
+          ? `${t('Observation period {period}', { period: d.period?.label || '' })} · ${d.windows[0].name}: ${d.windows[0].label} · ${d.windows[1].name}: ${d.windows[1].label}`
+          : t('Where validated cases cluster in two consecutive periods')
       }
       actions={<Segmented value={windowDays} onChange={onWindow} options={SPREAD_WINDOWS.map(([v, l]) => [v, t(l)])} />}
     >
-      <Notice tone="gray">{t('Based on reported cases only. It shows observed movement, not a forecast.')}</Notice>
+      <Notice tone="gray">{d?.note || t('Based on validated cases with a reliable location only. It shows observed movement, not a forecast.')}</Notice>
+      {needsDates && <p className="mt-3 text-sm text-ink2">{t('Set both the From and To dates above to compare the two halves of that range.')}</p>}
+      {d && (
+        <p className="mt-3 text-xs text-ink2">
+          {t('{used} validated cases used; {excluded} left out because their location is missing, outside Antique or too inaccurate. At least {n} cases are needed in each period.', {
+            used: d.cases_used ?? 0,
+            excluded: d.cases_excluded ?? 0,
+            n: d.min_records,
+          })}
+        </p>
+      )}
       {sample && <p className="mt-3 text-xs text-muted">{t('Directional spread always uses real validated records, never the sample data.')}</p>}
       <div className="mt-3">
         <ErrorNote message={res.error} onRetry={res.reload} />
@@ -83,13 +100,17 @@ function SpreadPanel({ res, windowDays, onWindow, sample }) {
               </span>
               <div className="min-w-0">
                 <div className="text-sm font-semibold text-ink">
-                  {s.pest}
+                  {s.pest_label || t(s.pest)}
                   {s.status === 'moved' && (
                     <span className="ml-2 rounded-full bg-violet-50 px-2 py-0.5 text-xs font-bold text-violet-700">{s.direction}</span>
                   )}
                 </div>
+                {s.summary && <div className="text-sm font-bold text-ink">{s.summary}</div>}
                 <div className={`text-sm ${s.status === 'insufficient' ? 'text-ink2' : 'text-ink'}`}>{s.message}</div>
                 <div className="text-xs text-muted">{s.detail}</div>
+                {s.excluded > 0 && (
+                  <div className="text-xs text-muted">{t('{n} case(s) left out: unreliable location.', { n: s.excluded })}</div>
+                )}
               </div>
             </li>
           ))}
@@ -102,6 +123,7 @@ function SpreadPanel({ res, windowDays, onWindow, sample }) {
 /** Filters + map (markers or heatmap) + directional spread + hotspot list. Validated observations only. */
 export function HotspotExplorer({ viewer, mapClassName }) {
   const t = useT();
+  const { lang } = useI18n();
   const isAgri = viewer.role === 'agriculturist';
   const [filters, setFilters] = useState(NO_FILTERS);
   const [openId, setOpenId] = useState(null);
@@ -111,7 +133,10 @@ export function HotspotExplorer({ viewer, mapClassName }) {
   const [sample, setSample] = useState(false);
   const [windowDays, setWindowDays] = useState(7);
   const res = useAsync(() => api.hotspots(filters), [JSON.stringify(filters)]);
-  // The spread compares the two windows that end on the "To" date (today when empty).
+  // The spread compares the two windows that end on the "To" date (today when
+  // empty), or with "From-To dates" the two halves of that custom range.
+  const custom = windowDays === 'custom';
+  const needsDates = custom && !(filters.start && filters.end);
   const spreadParams = {
     pest: filters.pest,
     level: filters.level,
@@ -119,9 +144,12 @@ export function HotspotExplorer({ viewer, mapClassName }) {
     crop_stage: filters.crop_stage,
     land_type: filters.land_type,
     end: filters.end,
-    window: windowDays,
+    ...(custom ? { start: filters.start } : { window: windowDays }),
   };
-  const spread = useAsync(() => api.spread(spreadParams), [JSON.stringify(spreadParams)]);
+  const spread = useAsync(
+    () => (needsDates ? Promise.resolve(null) : api.spread(spreadParams)),
+    [JSON.stringify(spreadParams), needsDates, lang],
+  );
   const set = (key) => (value) => setFilters((f) => ({ ...f, [key]: value }));
   const d = res.data;
   const filtered = Object.values(filters).some(Boolean);
@@ -168,7 +196,7 @@ export function HotspotExplorer({ viewer, mapClassName }) {
             <Select value={filters.crop_stage} onChange={set('crop_stage')} placeholder={t('All stages')} options={CROP_STAGES.map((s) => [s, t(s)])} />
           </Field>
           <Field label={t('Infestation level')}>
-            <Select value={filters.level} onChange={set('level')} placeholder={t('All levels')} options={LEVELS} />
+            <Select value={filters.level} onChange={set('level')} placeholder={t('All levels')} options={LEVELS.map((l) => [l, t(l)])} />
           </Field>
           <Field label={t('Land type')}>
             <Select value={filters.land_type} onChange={set('land_type')} placeholder={t('All land types')} options={LAND_TYPES.map(([v, l]) => [v, t(l)])} />
@@ -230,7 +258,7 @@ export function HotspotExplorer({ viewer, mapClassName }) {
         )}
       </Panel>
 
-      <SpreadPanel res={spread} windowDays={windowDays} onWindow={setWindowDays} sample={sample} />
+      <SpreadPanel res={spread} windowDays={windowDays} onWindow={setWindowDays} sample={sample} needsDates={needsDates} />
 
       {d && (
         <Panel className="mt-6" title={t('Barangay hotspots')} subtitle={t('Highest confirmed level first. Click a row to zoom the map to it.')} bodyClassName="">

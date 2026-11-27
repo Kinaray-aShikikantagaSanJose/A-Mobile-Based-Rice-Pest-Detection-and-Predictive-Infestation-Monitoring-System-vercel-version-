@@ -309,8 +309,10 @@ class F12aLoginState extends State<F12aLogin> {
 
   /// Rice-planting photo (as on the web dashboard) with the logo and greeting.
   Widget _buildHeader(double top) {
+    // Taller with large text, so the greeting never overflows the photo.
+    final extra = ((MediaQuery.textScalerOf(context).scale(100) - 100) * 2.5).clamp(0, 240).toDouble();
     return SizedBox(
-      height: 290 + top,
+      height: 290 + top + extra,
       child: Stack(
         fit: StackFit.expand,
         children: [
@@ -344,8 +346,14 @@ class F12aLoginState extends State<F12aLogin> {
                   children: [
                     BrandMark(size: 52),
                     SizedBox(width: AppSpacing.md),
-                    BrandWordmark(fontSize: 22),
-                    Spacer(),
+                    // Shrinks on narrow phones instead of pushing the language button off.
+                    Expanded(
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: FittedBox(fit: BoxFit.scaleDown, child: BrandWordmark(fontSize: 22)),
+                      ),
+                    ),
+                    SizedBox(width: AppSpacing.sm),
                     // Language picker, so people can switch before signing in.
                     LanguageButton(dark: true),
                   ],

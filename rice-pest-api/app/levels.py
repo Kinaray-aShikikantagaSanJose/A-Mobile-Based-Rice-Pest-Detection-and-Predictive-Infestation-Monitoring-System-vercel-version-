@@ -50,11 +50,19 @@ def indicators_for(pest: Optional[str]) -> list:
 
 
 def load_thresholds(db: Session) -> dict:
-    """{(pest, stage): row}. Stage '' means 'any stage' for that pest."""
+    """{(pest, stage): row}. Stage '' means 'any stage' for that pest.
+
+    `provisional` is True until an agriculturist confirms the row against a
+    source (supabase/03_2026_12_update.sql); before that migration every row
+    counts as provisional."""
+    from . import schema  # local import: schema imports nothing from here
+
+    extra = (", provisional, source_reference, confirmed_by, confirmed_at"
+             if schema.criteria_provisional_ready(db) else "")
     rows = db.execute(
         text(
-            "SELECT id, pest, crop_stage, medium_from, high_from, updated_by, updated_at "
-            "FROM level_criteria ORDER BY pest, crop_stage"
+            "SELECT id, pest, crop_stage, medium_from, high_from, updated_by, updated_at"
+            f"{extra} FROM level_criteria ORDER BY pest, crop_stage"
         )
     ).fetchall()
     return {
@@ -66,6 +74,10 @@ def load_thresholds(db: Session) -> dict:
             "high_from": r.high_from,
             "updated_by": r.updated_by,
             "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+            "provisional": bool(getattr(r, "provisional", True)),
+            "source_reference": getattr(r, "source_reference", "") or "",
+            "confirmed_by": getattr(r, "confirmed_by", None),
+            "confirmed_at": r.confirmed_at.isoformat() if getattr(r, "confirmed_at", None) else None,
         }
         for r in rows
     }
@@ -81,10 +93,17 @@ def suggest(
     crop_stage: str,
     count: Optional[int],
     indicators: Iterable[str],
+    lang: str = "en",
 ) -> dict:
-    """Returns {"level", "reasons"} so the technician sees why."""
+    """Returns {"level", "reasons", "provisional"} so the technician sees why.
+    `reasons` are in `lang`; `provisional` is True when the threshold used
+    has not been confirmed by an agriculturist (the suggestion then rests on
+    placeholder numbers and must be treated with care)."""
+    from . import i18n
+
     reasons = []
     row = thresholds.get((pest, crop_stage)) or thresholds.get((pest, ""))
+    provisional = True if row is None else row.get("provisional", True)
     if count is not None and row:
         if count >= row["high_from"]:
             base = "HIGH"
@@ -92,20 +111,18 @@ def suggest(
             base = "MEDIUM"
         else:
             base = "LOW"
-        stage = crop_stage or "any stage"
-        reasons.append(
-            f"Count {count}: {base} for {stage} (MEDIUM from {row['medium_from']:g}, HIGH from {row['high_from']:g})"
-        )
+        stage = i18n.t(crop_stage, lang) if crop_stage else i18n.render("stage.any", lang)
+        reasons.append(i18n.render("reason.count", lang, count=count, level=i18n.t(base, lang), stage=stage,
+                                   medium=f"{row['medium_from']:g}", high=f"{row['high_from']:g}"))
     else:
         base = "LOW"
-        if count is None:
-            reasons.append("No reliable count, so the suggestion starts at LOW and rests on the damage you saw")
-        else:
-            reasons.append("No thresholds set for this pest, so the suggestion starts at LOW")
+        reasons.append(i18n.render("reason.no_count" if count is None else "reason.no_thresholds", lang))
 
     known = set(indicators_for(pest))
     seen = [i for i in indicators if i in known]
     level = _bump(base, len(seen))
     for i in seen:
-        reasons.append(f"+1 level: {i}")
-    return {"level": level, "reasons": reasons}
+        reasons.append(i18n.render("reason.indicator", lang, indicator=i18n.t(i, lang)))
+    if row is not None and provisional:
+        reasons.append(i18n.render("reason.provisional", lang))
+    return {"level": level, "reasons": reasons, "provisional": provisional}

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { api } from '../api.js';
-import { Badge, Button, CheckChips, Drawer, Empty, ErrorNote, Field, LevelBadge, Loading, Notice, Panel, PageHeader, Segmented, Select } from '../components/ui.jsx';
+import { Badge, Button, CheckChips, Drawer, Empty, ErrorNote, Field, LevelBadge, Loading, Notice, Panel, PageHeader, Segmented, Select, useConfirm } from '../components/ui.jsx';
 import { useT } from '../i18n/index.jsx';
 import { CROP_STAGES, fmtDate, LEVELS, OPTION_TYPES, PEST_OPTIONS, pestLabel, useAction, useAsync } from '../lib.js';
 
@@ -104,8 +104,15 @@ function EntryCard({ entry, canEdit, onEdit, onChanged }) {
       await api.setEntryStatus(entry.id, approved ? 'draft' : 'approved');
       onChanged(approved ? t('"{title}" moved back to draft.', { title: entry.title }) : t('"{title}" approved.', { title: entry.title }));
     });
-  const remove = () => {
-    if (!window.confirm(t('Delete "{title}"? Treatments farmers already logged keep their name.', { title: entry.title }))) return;
+  const [confirm, dialog] = useConfirm();
+  const remove = async () => {
+    const ok = await confirm({
+      title: t('Delete this option?'),
+      message: t('Delete "{title}"? Treatments farmers already logged keep their name.', { title: entry.title }),
+      confirmLabel: t('Delete'),
+      danger: true,
+    });
+    if (!ok) return;
     action.run(async () => {
       await api.deleteEntry(entry.id);
       onChanged(t('"{title}" deleted.', { title: entry.title }));
@@ -113,6 +120,7 @@ function EntryCard({ entry, canEdit, onEdit, onChanged }) {
   };
   return (
     <article className="flex flex-col rounded-2xl border border-line bg-white p-5 shadow-sm">
+      {dialog}
       <div className="mb-2 flex flex-wrap items-center gap-1.5">
         {entry.crop_stages.length ? entry.crop_stages.map((s) => <Badge key={s}>{t(s)}</Badge>) : <Badge>{t('All stages')}</Badge>}
         {entry.levels.length ? entry.levels.map((l) => <LevelBadge key={l} level={l} />) : <Badge>{t('All levels')}</Badge>}

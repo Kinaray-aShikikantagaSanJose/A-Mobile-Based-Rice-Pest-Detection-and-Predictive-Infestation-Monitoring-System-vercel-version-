@@ -19,8 +19,10 @@ const countLabel = (n) => (n > 99 ? '99+' : String(n));
  * The dashboard navigation. On large screens it sits on the left and
  * collapses to an icon rail (labels then show as tooltips); on small screens
  * it opens as a drawer from the top bar's menu button.
+ * Collapsing is done only with the panel icon in the top bar (App.jsx); nothing
+ * in the sidebar itself toggles it.
  */
-export default function Sidebar({ groups, currentId, badges, viewer, collapsed, onToggle, onNavigate, onSignOut, mobileOpen, onCloseMobile, freshId }) {
+export default function Sidebar({ groups, currentId, badges, viewer, collapsed, onNavigate, onSignOut, mobileOpen, onCloseMobile, freshId }) {
   const t = useT();
   // Close the drawer with Escape and keep the page behind it still.
   useEffect(() => {

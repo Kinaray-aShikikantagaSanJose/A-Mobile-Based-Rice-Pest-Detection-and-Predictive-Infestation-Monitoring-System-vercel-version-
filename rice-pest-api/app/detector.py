@@ -1,11 +1,22 @@
-"""Server-side pest detection (YOLOv8, ONNX Runtime).
+"""Server-side pest detection (YOLO26s, ONNX Runtime) and image relevance.
 
 Analysis runs after upload, never on the phone: an offline farmer gets no
 result until the observation reaches the server.
 
-The model file is models/rice_pest.onnx, exported once from best.pt (see
-models/README.md). If it or onnxruntime is missing, uploads still succeed and
-the observation is marked for plain technician review.
+The model file is models/rice_pest_yolo26s.onnx (the fp32 ONNX export of the
+YOLO26s run of 2026-11-25; why this file was chosen over the TFLite variants
+is in models/MODEL_SELECTION.md). DETECTOR_MODEL_PATH may point elsewhere. If
+the file or onnxruntime is missing, or its embedded class list does not match
+CLASSES, uploads still succeed and the observation goes to plain technician
+review ("failed").
+
+Two separate questions are answered for every photo:
+  1. relevance  - does the photo look like a crop/field photo at all?
+                  (image_relevance(); a screening aid, not a classifier)
+  2. detection  - which of the four supported insects are visible?
+"No pests found" needs both a relevant-looking photo and no insect signal, so
+an unrelated photo (a wall, a person, a printed page) is never recorded as
+pest-free.
 """
 import os
 import threading
@@ -14,10 +25,19 @@ from typing import Optional
 import numpy as np
 from PIL import Image, ImageOps
 
-MODEL_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "models", "rice_pest.onnx")
+MODEL_FILE = "rice_pest_yolo26s.onnx"
+MODEL_PATH = os.getenv("DETECTOR_MODEL_PATH") or os.path.join(
+    os.path.dirname(os.path.dirname(__file__)), "models", MODEL_FILE)
 
-# Same order as the training data (data.yaml).
+# Same order as the training data (data.yaml). The model's own metadata
+# ("names") is checked against MODEL_LABELS when it loads.
 CLASSES = ["brown_planthopper", "green_leafhopper", "rice_bug", "rice_stem_borer"]
+MODEL_LABELS = {
+    "brown_planthopper": "brown-planthopper",
+    "green_leafhopper": "green-leafhopper",
+    "rice_bug": "rice-bug",
+    "rice_stem_borer": "stem-borer",
+}
 PEST_NAMES = {
     "brown_planthopper": "Brown Planthopper",
     "green_leafhopper": "Green Leafhopper",
@@ -63,15 +83,64 @@ MAX_IMAGE_SIDE = 2048    # stored photos are downscaled to this
 # on local photos.
 NO_PEST_MAX_SCORE = float(os.getenv("NO_PEST_MAX_SCORE", "0.12"))
 NO_PEST_MIN_SIDE = int(os.getenv("NO_PEST_MIN_SIDE", "480"))
-MODEL_VERSION = "rice_pest.onnx"
+MODEL_VERSION = os.path.basename(MODEL_PATH)
+
+# Image relevance (screening only). Share of pixels whose colour is plant-like
+# (hue 35-170 degrees: yellow-green to green, saturation >= 0.18, brightness
+# >= 0.12) on a 256 px copy. PROVISIONAL cut-off, measured on the photos we
+# have (models/MODEL_SELECTION.md, "Image relevance"): rice field and symptom
+# photos mostly 0.13-1.00, unrelated test shots (walls, people, printed pages,
+# black frames) 0.00-0.05, desktop wallpapers mostly below 0.01. Close-ups of
+# insects on a hand or a plain background can also score low, so a low score
+# never rejects a photo: it only rules out "no pests found" and asks a
+# technician to look. A pest detection always counts as evidence that the
+# photo is relevant.
+RELEVANCE_MIN_PLANT_FRACTION = float(os.getenv("RELEVANCE_MIN_PLANT_FRACTION", "0.10"))
+RELEVANT, POSSIBLY_UNRELATED = "relevant", "possibly_unrelated"
+UNRELATED_MESSAGE = "This photo may not show a rice plant or field. A technician will check it."
+
+# Classes whose names have NOT been verified against what the model actually
+# detects. Evaluation (models/MODEL_SELECTION.md, "Class label check") found
+# that, for this model family, output 2 ("rice-bug") fires on leaf-folder
+# caterpillars and output 3 ("stem-borer") on the dataset's "rice bug"
+# photos, while stem-borer moths get no consistent class. Until the training
+# labels are fixed and re-checked, these outputs are never used to NAME the
+# pest: the boxes are kept for the technician, who identifies it. Set
+# DETECTOR_UNVERIFIED_CLASSES="" only after that check.
+UNVERIFIED_CLASSES = frozenset(
+    c.strip() for c in os.getenv("DETECTOR_UNVERIFIED_CLASSES", "rice_bug,rice_stem_borer").split(",") if c.strip()
+)
+UNVERIFIED_MESSAGE = ("The model found insects, but its labels for this pest have not been verified yet. "
+                      "A technician will identify them.")
 
 _session = None
 _session_error: Optional[str] = None
+_model_info: dict = {}
 _lock = threading.Lock()
 
 
+def _check_model(session) -> dict:
+    """The file must be a 640x640 detector for exactly our four classes, in
+    our order, with the raw (not end-to-end) output that _run() decodes."""
+    import ast
+
+    meta = session.get_modelmeta().custom_metadata_map or {}
+    names = ast.literal_eval(meta["names"]) if meta.get("names") else None
+    expected = {i: MODEL_LABELS[c] for i, c in enumerate(CLASSES)}
+    if names is not None and {int(k): v for k, v in names.items()} != expected:
+        raise ValueError(f"model classes {names} do not match {expected}")
+    shape = session.get_inputs()[0].shape
+    if list(shape[2:]) != [INPUT_SIZE, INPUT_SIZE]:
+        raise ValueError(f"model input {shape} is not {INPUT_SIZE}x{INPUT_SIZE}")
+    out = session.get_outputs()[0].shape
+    if 4 + len(CLASSES) not in (out[1], out[2]):
+        raise ValueError(f"unexpected model output {out} (end-to-end exports are not supported)")
+    return {"description": meta.get("description", ""), "ultralytics_version": meta.get("version", ""),
+            "exported": meta.get("date", ""), "end2end": meta.get("end2end", "")}
+
+
 def _get_session():
-    global _session, _session_error
+    global _session, _session_error, _model_info
     if _session is not None or _session_error is not None:
         return _session
     with _lock:
@@ -81,7 +150,12 @@ def _get_session():
 
                 if not os.path.exists(MODEL_PATH):
                     raise FileNotFoundError(f"{MODEL_PATH} not found")
-                _session = ort.InferenceSession(MODEL_PATH, providers=["CPUExecutionProvider"])
+                opts = ort.SessionOptions()
+                # Vercel Hobby functions get 1 vCPU; more threads only add overhead there.
+                opts.intra_op_num_threads = int(os.getenv("DETECTOR_THREADS", "1" if os.getenv("VERCEL") else "2"))
+                session = ort.InferenceSession(MODEL_PATH, opts, providers=["CPUExecutionProvider"])
+                _model_info = _check_model(session)
+                _session = session
             except Exception as e:  # missing package or model: degrade, don't crash uploads
                 _session_error = f"{type(e).__name__}: {e}"
     return _session
@@ -89,7 +163,34 @@ def _get_session():
 
 def status() -> dict:
     _get_session()
-    return {"available": _session is not None, "error": _session_error}
+    return {"available": _session is not None, "error": _session_error, "model": MODEL_VERSION,
+            "info": _model_info}
+
+
+def plant_fraction(img: Image.Image) -> float:
+    """Share of plant-coloured pixels (see RELEVANCE_MIN_PLANT_FRACTION)."""
+    g = img.convert("RGB")
+    g.thumbnail((256, 256))
+    hsv = np.asarray(g.convert("HSV"), dtype=np.int16)
+    h, s, v = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+    # PIL's HSV is 0-255: hue 25-120 = 35-170 degrees; 46 = 0.18; 31 = 0.12.
+    return round(float(((h >= 25) & (h <= 120) & (s >= 46) & (v >= 31)).mean()), 4)
+
+
+def image_relevance(img: Image.Image, pest_evidence: bool = False) -> dict:
+    """{"status": "relevant" | "possibly_unrelated", "plant_fraction", "basis", ...}.
+
+    A screening aid, not a classifier: "possibly_unrelated" only means a
+    technician should look before the photo counts as an observation."""
+    frac = plant_fraction(img)
+    if pest_evidence:
+        state, basis = RELEVANT, "pest_detected"
+    elif frac >= RELEVANCE_MIN_PLANT_FRACTION:
+        state, basis = RELEVANT, "plant_colour"
+    else:
+        state, basis = POSSIBLY_UNRELATED, "little_plant_colour"
+    return {"status": state, "plant_fraction": frac, "basis": basis,
+            "min_plant_fraction": RELEVANCE_MIN_PLANT_FRACTION, "provisional": True}
 
 
 def normalize_photo(raw: bytes):
@@ -209,10 +310,11 @@ NO_PESTS_MESSAGE = "No pests were found in this photo."
 
 
 def _metadata(img: Image.Image, metrics: dict, quality: Optional[str], top: float, mtop: float,
-              boxes: int) -> dict:
+              boxes: int, relevance: Optional[dict] = None) -> dict:
     """What the decision was based on (saved with the observation)."""
     return {
         "model": MODEL_VERSION,
+        "relevance": relevance,
         "input_size": INPUT_SIZE,
         "image_width": img.size[0],
         "image_height": img.size[1],
@@ -223,26 +325,44 @@ def _metadata(img: Image.Image, metrics: dict, quality: Optional[str], top: floa
         "max_score_mirrored": round(mtop, 4),
         "reported_boxes": boxes,
         "thresholds": {"no_pest_max_score": NO_PEST_MAX_SCORE, "no_pest_min_side": NO_PEST_MIN_SIDE,
-                       "report_conf": REPORT_CONF, "candidate_conf": CANDIDATE_CONF},
+                       "report_conf": REPORT_CONF, "candidate_conf": CANDIDATE_CONF,
+                       "relevance_min_plant_fraction": RELEVANCE_MIN_PLANT_FRACTION},
     }
 
 
 def analyze(img: Image.Image) -> dict:
     """Returns {status, result, pest, confidence, count, countable, detections,
-    message, metadata}.
+    message, metadata, relevance}.
     detections: [{"x1","y1","x2","y2" (0-1 of the stored photo), "conf", "pest"}].
     result: "pests_found" | "no_pests_found" | "uncertain" | "failed".
+    relevance: "relevant" | "possibly_unrelated" (image_relevance()).
 
     Prefers "not sure" over a wrong answer: detections must be confident,
     reappear in the mirrored photo and look like single insects, and the pest
-    is only named on solid evidence. "no_pests_found" needs a clear photo on
-    which the model saw nothing at all (see NO_PEST_MAX_SCORE)."""
+    is only named on solid evidence. "no_pests_found" needs a clear,
+    relevant-looking photo on which the model saw nothing at all (see
+    NO_PEST_MAX_SCORE and RELEVANCE_MIN_PLANT_FRACTION). "Unrelated photo" and
+    "no pests" are never the same answer."""
+    out = _detect(img)
+    rel = (out.get("metadata") or {}).get("relevance") or image_relevance(img, bool(out.get("detections")))
+    out["metadata"] = {**(out.get("metadata") or {}), "relevance": rel}
+    out["relevance"] = rel["status"]
+    return out
+
+
+def screen_only(img: Image.Image) -> dict:
+    """Relevance for reports the model does not analyse (disease reports)."""
+    return image_relevance(img)
+
+
+def _detect(img: Image.Image) -> dict:
     session = _get_session()
     if session is None:
         return {"status": "failed", "result": "failed", "pest": None, "confidence": None, "count": None,
                 "countable": False, "detections": [],
                 "message": "Automatic analysis is unavailable. A technician will identify the pest.",
-                "metadata": {"model": MODEL_VERSION, "error": _session_error}}
+                "metadata": {"model": MODEL_VERSION, "error": _session_error,
+                             "relevance": image_relevance(img)}}
 
     w, h = img.size
     metrics = photo_metrics(img)
@@ -284,7 +404,13 @@ def analyze(img: Image.Image) -> dict:
         for b, score, k in detections
     ]
     retake = f"The photo looks {quality}; the technician may ask for a new one." if quality else None
-    meta = _metadata(img, metrics, quality, top, mtop, len(boxes_out))
+    relevance = image_relevance(img, pest_evidence=bool(boxes_out))
+    meta = _metadata(img, metrics, quality, top, mtop, len(boxes_out), relevance)
+
+    if not boxes_out and relevance["status"] == POSSIBLY_UNRELATED:
+        # Not "no pests": the photo may not show a field at all.
+        return {"status": "done", "result": "uncertain", "pest": None, "confidence": None, "count": None,
+                "countable": False, "detections": [], "message": UNRELATED_MESSAGE, "metadata": meta}
 
     if not boxes_out:
         clear_nothing = (
@@ -318,6 +444,12 @@ def analyze(img: Image.Image) -> dict:
                 "count": None, "countable": False, "detections": boxes_out,
                 "message": retake or "Possible pests were found, but not clearly enough to name one. A technician will identify it.",
                 "metadata": meta}
+    if pest in UNVERIFIED_CLASSES:
+        # Insects were found, but this output's name is not trustworthy (see
+        # UNVERIFIED_CLASSES): keep the boxes, don't name or count.
+        return {"status": "done", "result": "uncertain", "pest": None, "confidence": round(mean_conf, 3),
+                "count": None, "countable": False, "detections": boxes_out, "message": UNVERIFIED_MESSAGE,
+                "metadata": {**meta, "unverified_class": pest}}
 
     arr = np.array([[d["x1"] * w, d["y1"] * h, d["x2"] * w, d["y2"] * h] for d in mine])
     crowded = sum(

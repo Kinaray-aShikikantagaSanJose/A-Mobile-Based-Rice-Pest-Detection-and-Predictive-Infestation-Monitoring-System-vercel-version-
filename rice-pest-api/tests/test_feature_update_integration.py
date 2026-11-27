@@ -344,11 +344,12 @@ class FeatureUpdateIntegration(unittest.TestCase):
         self.client.put("/auth/me", json={"preferred_language": "krj"}, headers=self.h(farmer))
         e = self.submit(farmer)
         r = self.client.post(f"/sync/scans/{e['id']}/review", headers=self.h(techsib), json={
-            "action": "validate", "pest": "rice_bug", "count": 4, "countable": True, "level": "LOW"})
+            "action": "validate", "pest": "rice_bug", "count": 4, "countable": True, "level": "LOW",
+            "reviewer_note": "Four rice bugs visible on the panicle, no grain damage yet"})
         self.assertEqual(r.status_code, 200, r.text)
         note = next(n for n in self.client.get("/sync/notifications", headers=self.h(farmer)).json()["items"]
                     if n["scan_id"] == e["id"])
-        self.assertEqual(note["title"], "Na-validate: Rice Bug, manubo nga lebel it peste")
+        self.assertEqual(note["title"], "Na-validate: Tiyangaw (rice bug), manubo nga lebel it peste")
 
     # ---------------------------------------------------------------- activity log endpoints
 

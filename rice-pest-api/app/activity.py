@@ -33,8 +33,8 @@ ACTIONS = (
     "account_registered", "email_verified", "otp_resent", "account_deleted",
     "profile_updated", "password_changed", "avatar_changed", "language_changed", "location_updated",
     "observation_submitted", "observation_no_pests", "observation_reviewed", "observation_deleted",
-    "treatment_logged", "treatment_updated",
-    "user_created", "user_updated", "user_deleted",
+    "treatment_logged", "treatment_updated", "land_type_changed",
+    "user_created", "user_updated", "user_deleted", "criteria_confirmed",
     "library_changed", "criteria_changed", "report_exported",
 )
 

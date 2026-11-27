@@ -226,12 +226,16 @@ class _F30NewObservationState extends State<F30NewObservation> {
     if (!mounted || path == null) return;
     try {
       final dir = p.join(await documentsDirPath(), 'observations');
-      await createLocalDir(dir);
-      final dest = p.join(
-        dir,
-        'obs_${DateTime.now().microsecondsSinceEpoch}${p.extension(path)}',
-      );
-      await copyLocalFile(path, dest);
+      // The camera already saves its photo in this folder (phones and the
+      // web): use that file instead of keeping a second copy of it.
+      final String dest;
+      if (p.isWithin(dir, path)) {
+        dest = path;
+      } else {
+        await createLocalDir(dir);
+        dest = p.join(dir, 'obs_${DateTime.now().microsecondsSinceEpoch}${p.extension(path)}');
+        await copyLocalFile(path, dest);
+      }
       if (!mounted) return;
       setState(() => _photo = dest);
       _next();
@@ -432,7 +436,11 @@ class _F30NewObservationState extends State<F30NewObservation> {
                     key: ValueKey(_step),
                     child: ListView(
                       padding: const EdgeInsets.fromLTRB(AppSpacing.hPad, AppSpacing.lg, AppSpacing.hPad, AppSpacing.xl),
-                      children: _body(),
+                      children: [
+                        MaxContentWidth(
+                          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: _body()),
+                        ),
+                      ],
                     ),
                   ),
                 ),
@@ -946,24 +954,27 @@ class _LocationCard extends StatelessWidget {
             children: [
               const Icon(Icons.location_off_rounded, color: AppColors.orange),
               const SizedBox(width: AppSpacing.sm),
-              Text(context.tr('No location yet'), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              Expanded(
+                child: Text(context.tr('No location yet'), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              ),
             ],
           ),
           const SizedBox(height: AppSpacing.sm),
           Text(why, style: const TextStyle(color: AppColors.textSecondary, height: 1.4)),
           const SizedBox(height: AppSpacing.md),
-          Row(
+          // Wraps onto two lines on narrow phones or with large text.
+          Wrap(
+            spacing: AppSpacing.sm,
+            runSpacing: AppSpacing.sm,
             children: [
               AppPrimaryButton(label: context.tr('Try again'), compact: true, expanded: false, onPressed: onRetry),
-              if (gps.deniedForever) ...[
-                const SizedBox(width: AppSpacing.sm),
+              if (gps.deniedForever)
                 AppSecondaryButton(
                   label: context.tr('Open settings'),
                   compact: true,
                   expanded: false,
                   onPressed: GpsService.openAppSettings,
                 ),
-              ],
             ],
           ),
         ],
@@ -1120,11 +1131,13 @@ class _SummaryRow extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            SizedBox(
-              width: 96,
+            // Label and value share the row so long words wrap on narrow phones.
+            Expanded(
+              flex: 2,
               child: Text(label, style: const TextStyle(color: AppColors.textMuted, fontSize: 13.5)),
             ),
-            Expanded(child: Text(value, style: const TextStyle(fontSize: 15, height: 1.35))),
+            const SizedBox(width: AppSpacing.sm),
+            Expanded(flex: 3, child: Text(value, style: const TextStyle(fontSize: 15, height: 1.35))),
             if (onEdit != null)
               InkWell(
                 onTap: onEdit,

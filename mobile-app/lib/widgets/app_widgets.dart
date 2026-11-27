@@ -6,6 +6,7 @@ import '../l10n/app_language.dart';
 import '../platform/local_files.dart';
 import '../theme.dart';
 import '../services/api_client.dart';
+import '../services/auth_service.dart';
 import '../services/local_store.dart';
 import '../utils/formatters.dart';
 import 'motion.dart';
@@ -39,7 +40,7 @@ class AppHeader extends StatelessWidget {
     final bool back = showBack && (onBack != null || ShellScope.maybeOf(context) == null);
     return Padding(
       padding: const EdgeInsets.fromLTRB(AppSpacing.hPad, AppSpacing.sm, AppSpacing.hPad, AppSpacing.sm),
-      child: Row(
+      child: LayoutBuilder(builder: (context, constraints) => Row(
         children: [
           if (back) ...[
             AppCircleButton(
@@ -78,11 +79,88 @@ class AppHeader extends StatelessWidget {
               ],
             ),
           ),
-          ...actions,
+          // Actions never push the title off a narrow screen: they get at
+          // most 60% of the row and wrap onto a second line if needed.
+          if (actions.isNotEmpty)
+            ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: constraints.maxWidth * 0.6),
+              child: Wrap(
+                alignment: WrapAlignment.end,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 4,
+                runSpacing: 4,
+                children: actions,
+              ),
+            ),
+        ],
+      )),
+    );
+  }
+}
+
+/// Widest the main content of a page gets on tablets and the web (phones
+/// are narrower, so it changes nothing there).
+const double kMaxContentWidth = 640;
+
+/// Centres [child] and caps its width at [kMaxContentWidth]. Use it around
+/// the content of scrollable pages instead of per-screen width hacks.
+class MaxContentWidth extends StatelessWidget {
+  final Widget child;
+  final double maxWidth;
+  const MaxContentWidth({super.key, required this.child, this.maxWidth = kMaxContentWidth});
+
+  @override
+  Widget build(BuildContext context) => Align(
+        alignment: Alignment.topCenter,
+        child: ConstrainedBox(constraints: BoxConstraints(maxWidth: maxWidth), child: child),
+      );
+}
+
+/// Small grey note: the screen shows the copy saved on this phone (offline,
+/// or while it refreshes) and when that copy was saved.
+class SavedDataNote extends StatelessWidget {
+  final DateTime savedAt;
+  final bool refreshing;
+  const SavedDataNote({super.key, required this.savedAt, this.refreshing = false});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+      child: Row(
+        children: [
+          refreshing
+              ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 1.8))
+              : const Icon(Icons.history_rounded, size: 15, color: AppColors.textMuted),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              context.tr('Showing saved data from {time}', {'time': formatDateTime(savedAt.toIso8601String())}),
+              style: const TextStyle(color: AppColors.textMuted, fontSize: 12.5),
+            ),
+          ),
         ],
       ),
     );
   }
+}
+
+/// Nothing saved on the phone and the request failed: say why and offer a
+/// retry (instead of a spinner that never ends).
+class LoadErrorState extends StatelessWidget {
+  final String message;
+  final VoidCallback onRetry;
+  const LoadErrorState({super.key, required this.message, required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) => AppEmptyState(
+        icon: Icons.cloud_off_rounded,
+        color: AppColors.orange,
+        title: context.tr("Couldn't load this"),
+        message: context.tr(message),
+        actionLabel: context.tr('Try again'),
+        onAction: onRetry,
+      );
 }
 
 /// Pops when possible, otherwise goes Home (avoids go_router's
@@ -564,13 +642,14 @@ Future<bool> confirmAction(
   IconData icon = Icons.send_rounded,
   Color color = AppColors.primary,
   List<(String, String)> summary = const [],
+  String? cancelLabel,
 }) async {
   HapticFeedback.selectionClick();
   final ok = await showModalBottomSheet<bool>(
     context: context,
     isScrollControlled: true,
     builder: (ctx) => SafeArea(
-      child: Padding(
+      child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(AppSpacing.hPad, 0, AppSpacing.hPad, AppSpacing.lg),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -605,11 +684,13 @@ Future<bool> confirmAction(
                         child: Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            SizedBox(
-                              width: 104,
+                            Expanded(
+                              flex: 2,
                               child: Text(k, style: const TextStyle(color: AppColors.textMuted, fontSize: 13)),
                             ),
+                            const SizedBox(width: AppSpacing.sm),
                             Expanded(
+                              flex: 3,
                               child: Text(v, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13.5)),
                             ),
                           ],
@@ -624,7 +705,7 @@ Future<bool> confirmAction(
             const SizedBox(height: AppSpacing.sm),
             TextButton(
               onPressed: () => Navigator.pop(ctx, false),
-              child: Text(ctx.tr('Not yet, go back'), style: const TextStyle(fontWeight: FontWeight.w600)),
+              child: Text(cancelLabel ?? ctx.tr('Not yet, go back'), style: const TextStyle(fontWeight: FontWeight.w600)),
             ),
           ],
         ),
@@ -632,6 +713,49 @@ Future<bool> confirmAction(
     ),
   );
   return ok == true;
+}
+
+/// Asks before signing out and says what is still on this phone: unsent
+/// observations and treatments stay here and go out after signing in again
+/// with the same account (a different account signing in removes them, see
+/// AuthControllerImpl). Signs out (server too, best effort) when confirmed.
+/// [loadCounts] and [signOut] are seams for tests; [beforeSignOut] runs
+/// right before signing out (e.g. to close a sheet). Returns true if signed out.
+Future<bool> confirmAndSignOut(
+  BuildContext context, {
+  Future<PendingCounts> Function()? loadCounts,
+  Future<void> Function()? signOut,
+  VoidCallback? beforeSignOut,
+}) async {
+  PendingCounts counts;
+  try {
+    counts = await (loadCounts ?? LocalStore.instance.pendingCounts)();
+  } catch (_) {
+    counts = const PendingCounts(0, 0);
+  }
+  if (!context.mounted) return false;
+  final ok = await confirmAction(
+    context,
+    title: context.tr('Sign out?'),
+    message: counts.total == 0
+        ? context.tr('Everything is sent. You can sign in again any time with the same email and password.')
+        : context.tr(
+            'These are not sent yet. They stay on this phone and are sent after you sign in again with the same '
+            'account. If a different account signs in on this phone, they are removed.',
+          ),
+    confirmLabel: context.tr('Sign out'),
+    cancelLabel: context.tr('Stay signed in'),
+    icon: Icons.logout_rounded,
+    color: AppColors.danger,
+    summary: [
+      if (counts.observations > 0) (context.tr('Observations not sent'), '${counts.observations}'),
+      if (counts.treatments > 0) (context.tr('Treatments not sent'), '${counts.treatments}'),
+    ],
+  );
+  if (!ok || !context.mounted) return false;
+  beforeSignOut?.call();
+  await (signOut ?? AuthService.instance.signOut)();
+  return true;
 }
 
 /// Tinted pill label.
@@ -690,15 +814,17 @@ class LevelChip extends StatelessWidget {
       );
 }
 
-/// Where a record stands: Waiting for signal / For technician validation /
-/// Sent for review / With an agriculturist / Please send a new photo / Validated.
+/// Where a record stands: Waiting for signal / Waiting for review / With an
+/// agriculturist / Please send a new photo / Validated / No pests found.
+/// [staff] shows the queue names instead (Not Validated / To Be Validated).
 class StatusChip extends StatelessWidget {
   final RecordState state;
-  const StatusChip({super.key, required this.state});
+  final bool staff;
+  const StatusChip({super.key, required this.state, this.staff = false});
 
   @override
   Widget build(BuildContext context) => AppChip(
-        label: recordStateLabel(state),
+        label: recordStateLabel(state, staff: staff),
         color: recordStateColor(state),
         icon: recordStateIcon(state),
       );

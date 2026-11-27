@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useT } from '../i18n/index.jsx';
 
 // ---------------------------------------------------------------- layout
@@ -95,11 +95,13 @@ export function LevelBadge({ level }) {
   return <Badge tone={LEVEL_TONE[level]}>{t(level)}</Badge>;
 }
 
+// The two review queues are the statuses pending ("Not Validated", initial
+// review) and escalated ("To Be Validated", agriculturist); no extra statuses.
 const STATUS = {
-  pending: ['orange', 'For validation'],
+  pending: ['orange', 'Not Validated'],
   validated: ['green', 'Validated'],
   returned: ['gray', 'Returned to farmer'],
-  escalated: ['purple', 'Escalated'],
+  escalated: ['purple', 'To Be Validated'],
   // The model confidently found no insect on a clear photo (photo removed).
   no_pests: ['blue', 'No pests found'],
 };
@@ -127,7 +129,9 @@ export function PatternBadge({ status }) {
 const OUTCOME = {
   improved: ['green', 'Improved'],
   'no change': ['gray', 'No change'],
-  worse: ['red', 'Worse'],
+  worsened: ['red', 'Worsened'],
+  worse: ['red', 'Worsened'], // older API builds
+  'not comparable': ['gray', 'Not comparable'],
   'awaiting follow-up': ['blue', 'Awaiting follow-up'],
   overdue: ['orange', 'Follow-up overdue'],
   'follow-up in review': ['purple', 'Follow-up in review'],
@@ -137,6 +141,17 @@ export function OutcomeBadge({ outcome }) {
   const t = useT();
   const [tone, label] = OUTCOME[outcome] || ['gray', outcome];
   return <Badge tone={tone}>{t(label)}</Badge>;
+}
+
+/** The relevance screen's flag: the photo may not show a crop (a technician checks it). */
+export function RelevanceBadge({ relevance }) {
+  const t = useT();
+  if (relevance !== 'possibly_unrelated') return null;
+  return (
+    <span title={t('This photo may not show a rice plant or field. A technician will check it.')}>
+      <Badge tone="orange">{t('Possibly unrelated photo')}</Badge>
+    </span>
+  );
 }
 
 export function ReportTypeBadge({ type }) {
@@ -178,10 +193,14 @@ const SIZES = {
   xl: 'px-6 py-3.5 text-base',
 };
 
-export function Button({ variant = 'primary', size = 'md', busy = false, className = '', children, ...props }) {
+export const Button = forwardRef(function Button(
+  { variant = 'primary', size = 'md', busy = false, className = '', children, ...props },
+  ref,
+) {
   const sizing = SIZES[size] || SIZES.md;
   return (
     <button
+      ref={ref}
       type="button"
       {...props}
       disabled={props.disabled || busy}
@@ -191,7 +210,7 @@ export function Button({ variant = 'primary', size = 'md', busy = false, classNa
       {children}
     </button>
   );
-}
+});
 
 /** Use as="div" around groups of buttons (a <label> forwards clicks to its first button). */
 export function Field({ label, hint, children, className = '', as: Tag = 'label' }) {
@@ -451,6 +470,95 @@ export function Drawer({ open, onClose, title, subtitle, children, width = 'max-
         </header>
         <div className="flex-1 overflow-y-auto px-6 py-5">{children}</div>
       </aside>
+    </div>
+  );
+}
+
+
+// ---------------------------------------------------------------- confirmation dialog
+
+/**
+ * Asks before a destructive or consequential action. `danger` styles the
+ * confirm button red. `children` can add details (e.g. what will be lost).
+ * Escape or the backdrop cancels; focus starts on Cancel.
+ */
+export function ConfirmDialog({ open, title, message, confirmLabel, cancelLabel, danger = false, busy = false,
+  onConfirm, onCancel, children }) {
+  const t = useT();
+  const cancelRef = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    cancelRef.current?.focus();
+    const onKey = (e) => e.key === 'Escape' && !busy && onCancel();
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, busy, onCancel]);
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-[3000] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-ink/40" onClick={() => !busy && onCancel()} />
+      <div
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="confirm-title"
+        className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
+      >
+        <h2 id="confirm-title" className="text-lg font-bold text-ink">{title}</h2>
+        {message && <p className="mt-2 text-sm text-ink2">{message}</p>}
+        {children && <div className="mt-3 text-sm text-ink2">{children}</div>}
+        <div className="mt-6 flex flex-wrap justify-end gap-2">
+          <Button ref={cancelRef} variant="secondary" onClick={onCancel} disabled={busy}>
+            {cancelLabel || t('Cancel')}
+          </Button>
+          <Button variant={danger ? 'destructive' : 'primary'} onClick={onConfirm} disabled={busy}>
+            {busy ? t('Please wait…') : confirmLabel || t('Confirm')}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** `const [confirm, dialog] = useConfirm();  if (await confirm({title, message, danger})) ...` */
+export function useConfirm() {
+  const [state, setState] = useState(null);
+  const confirm = useCallback(
+    (opts) => new Promise((resolve) => setState({ ...opts, resolve })),
+    [],
+  );
+  const close = (answer) => {
+    state?.resolve(answer);
+    setState(null);
+  };
+  const dialog = (
+    <ConfirmDialog open={!!state} {...(state || {})} onConfirm={() => close(true)} onCancel={() => close(false)} />
+  );
+  return [confirm, dialog];
+}
+
+// ---------------------------------------------------------------- pager
+
+/** Server-side paging controls: "1-50 of 230" with previous/next. */
+export function Pager({ total, limit, offset, onChange, loading = false }) {
+  const t = useT();
+  if (!total || total <= limit) {
+    return total ? <div className="px-4 py-3 text-xs text-muted">{t('{n} shown', { n: total })}</div> : null;
+  }
+  const first = offset + 1;
+  const last = Math.min(offset + limit, total);
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line px-4 py-3 text-sm">
+      <span className="text-ink2">{t('{first}–{last} of {total}', { first, last, total })}</span>
+      <div className="flex gap-2">
+        <Button variant="secondary" size="sm" disabled={loading || offset === 0}
+          onClick={() => onChange(Math.max(0, offset - limit))}>
+          {t('Previous')}
+        </Button>
+        <Button variant="secondary" size="sm" disabled={loading || last >= total}
+          onClick={() => onChange(offset + limit)}>
+          {t('Next')}
+        </Button>
+      </div>
     </div>
   );
 }

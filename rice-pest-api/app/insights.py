@@ -104,6 +104,12 @@ def _shape(r) -> dict:
         "trap_type": r.trap_type or "",
         "notes": (r.notes or "").strip(),
         "follow_up_of": r.follow_up_of,
+        # Location quality, for spread and maps (supabase/01_schema.sql 2026-11).
+        "location_status": getattr(r, "location_status", "") or "",
+        "gps_accuracy_m": getattr(r, "gps_accuracy_m", None),
+        "gps_barangay_psgc": getattr(r, "gps_barangay_psgc", None),
+        "image_relevance": getattr(r, "image_relevance", "") or "",
+        "queue": obs.queue_of(r.validation_status),
     }
 
 
@@ -141,10 +147,19 @@ def load_scans(
 
 
 def filter_scans(rows: list, pest: str = "", level: str = "", municipality: str = "",
-                 crop_stage: str = "", q: str = "", land_type: str = "") -> list:
+                 crop_stage: str = "", q: str = "", land_type: str = "", relevance: str = "") -> list:
+    """Same filters for lists, maps and exports. land_type "not_recorded"
+    selects records saved before the field existed."""
     q = q.strip().lower().lstrip("#")
     out = []
     for r in rows:
+        if relevance and r.get("image_relevance", "") != relevance:
+            continue
+        if land_type == "not_recorded":
+            if r["land_type"]:
+                continue
+        elif land_type and r["land_type"] != land_type:
+            continue
         if pest and r["pest"] != pest:
             continue
         if level and r["level"] != level.upper():
@@ -152,8 +167,6 @@ def filter_scans(rows: list, pest: str = "", level: str = "", municipality: str 
         if municipality and r["municipality"].lower() != municipality.strip().lower():
             continue
         if crop_stage and r["crop_stage"] != crop_stage:
-            continue
-        if land_type and r["land_type"] != land_type:
             continue
         if q:
             haystack = " ".join(
@@ -164,6 +177,31 @@ def filter_scans(rows: list, pest: str = "", level: str = "", municipality: str 
                 continue
         out.append(r)
     return out
+
+
+SORTS = {
+    "created_at": lambda r: (r["created_at"], r["id"]),
+    "id": lambda r: (r["id"],),
+    "level": lambda r: (LEVEL_RANK.get(r["level"], -1), r["created_at"], r["id"]),
+    "municipality": lambda r: (r["municipality"].lower(), (r["barangay"] or "").lower(), r["created_at"], r["id"]),
+    "pest": lambda r: (r["pest"].lower(), r["created_at"], r["id"]),
+    "status": lambda r: (r["status"], r["created_at"], r["id"]),
+    "land_type": lambda r: (r["land_type"], r["created_at"], r["id"]),
+}
+DEFAULT_SORT = "-created_at"
+
+
+def sort_rows(rows: list, sort: str = DEFAULT_SORT) -> list:
+    """Stable, total order (the id breaks ties), so pages never overlap or
+    skip rows. `sort` is a key of SORTS, '-' prefix = descending."""
+    desc = sort.startswith("-")
+    key = SORTS.get(sort.lstrip("-")) or SORTS["created_at"]
+    return sorted(rows, key=key, reverse=desc)
+
+
+def page(rows: list, limit: Optional[int], offset: int = 0) -> list:
+    offset = max(0, offset or 0)
+    return rows[offset:offset + limit] if limit else rows[offset:]
 
 
 def facets(rows: list) -> dict:
@@ -381,16 +419,29 @@ def quarterly_patterns(db: Session, viewer: dict, quarter: str = "", strict: boo
 
 # ---------------------------------------------------------------- treatments & follow-ups
 
-def _outcome(before_level, after_level, before, after) -> str:
-    if before_level in LEVEL_RANK and after_level in LEVEL_RANK and before_level != after_level:
-        return "improved" if LEVEL_RANK[after_level] < LEVEL_RANK[before_level] else "worse"
+OUTCOMES_FINAL = ("improved", "no change", "worsened")
+OUTCOMES_PENDING = ("awaiting follow-up", "overdue", "follow-up in review")
+NOT_COMPARABLE = "not comparable"
+
+
+def _outcome(before_level, after_level, before, after) -> tuple:
+    """(outcome, basis) for two REVIEWED observations of the same pest.
+    Levels are compared first (the reviewers' confirmed levels); when the
+    level is the same, counts decide only if both photos were countable and
+    the change is at least COUNT_CHANGE_PCT (provisional). Missing evidence
+    is "not comparable", never a guess."""
+    if before_level not in LEVEL_RANK or after_level not in LEVEL_RANK:
+        return NOT_COMPARABLE, "level missing"
+    if before_level != after_level:
+        better = LEVEL_RANK[after_level] < LEVEL_RANK[before_level]
+        return ("improved" if better else "worsened"), "confirmed level"
     if before and after is not None:
         pct = (before - after) / before * 100
         if pct >= COUNT_CHANGE_PCT:
-            return "improved"
+            return "improved", "count (same level)"
         if pct <= -COUNT_CHANGE_PCT:
-            return "worse"
-    return "no change"
+            return "worsened", "count (same level)"
+    return "no change", "confirmed level"
 
 
 def treatment_followups(db: Session, viewer: dict) -> dict:
@@ -403,6 +454,10 @@ def treatment_followups(db: Session, viewer: dict) -> dict:
     rules = ("t.recommend_again, t.follow_up_set_by" if schema.treatment_rules_ready(db)
              else "FALSE AS recommend_again, NULL AS follow_up_set_by")
     land_col = "s.land_type" if schema.land_type_ready(db) else "'' AS land_type"
+    # Whether a reviewer recommended this exact option for the treated observation.
+    rec_col = ("EXISTS (SELECT 1 FROM scan_recommendations r WHERE r.scan_id = t.scan_id "
+               "AND r.library_id = t.library_id) AS was_recommended"
+               if schema.recommendations_ready(db) else "FALSE AS was_recommended")
     rows = db.execute(
         text(
             f"""
@@ -411,8 +466,11 @@ def treatment_followups(db: Session, viewer: dict) -> dict:
                    COALESCE(NULLIF(btrim(s.municipality), ''), btrim(u.region), '') AS area,
                    COALESCE(NULLIF(btrim(s.barangay), ''), btrim(u.barangay), '') AS brgy,
                    s.confirmed_pest, s.confirmed_count, s.infestation_level, s.crop_phase,
+                   s.created_at AS s_at, s.countable AS s_countable,
                    f.id AS f_id, f.created_at AS f_at, f.validation_status AS f_status,
-                   f.confirmed_count AS f_count, f.infestation_level AS f_level
+                   f.confirmed_count AS f_count, f.infestation_level AS f_level,
+                   f.confirmed_pest AS f_pest, f.countable AS f_countable,
+                   {rec_col}
             FROM treatments t
             JOIN scans s ON s.id = t.scan_id
             LEFT JOIN users_fdw u ON u.email = s.user_email
@@ -428,21 +486,30 @@ def treatment_followups(db: Session, viewer: dict) -> dict:
     today = local_today()
     items = []
     for t in rows:
-        before = t.pre_count if t.pre_count else t.confirmed_count
+        # Counts are only compared when BOTH photos were countable.
+        before = (t.pre_count if t.pre_count else t.confirmed_count) if t.s_countable is not False else None
+        after = reduction = None
         if t.f_id is None:
+            # Pending stays pending: no outcome until a follow-up is reviewed.
             outcome = "overdue" if t.follow_up_due and t.follow_up_due < today else "awaiting follow-up"
-            after = reduction = None
+            basis = "no follow-up yet"
         elif t.f_status == "no_pests":
-            # The follow-up photo showed no pests at all.
-            after = 0
-            reduction = 100.0 if before else None
-            outcome = "improved"
+            # The model found no insect on the follow-up photo, but nobody
+            # reviewed it, and a pest-free photo of one spot does not prove
+            # the treatment worked. Not counted as improved.
+            outcome, basis = NOT_COMPARABLE, "follow-up photo not reviewed (no pests detected)"
         elif t.f_status != "validated":
-            outcome, after, reduction = "follow-up in review", None, None
+            outcome, basis = "follow-up in review", "follow-up not reviewed yet"
+        elif t.f_pest != t.confirmed_pest:
+            outcome, basis = NOT_COMPARABLE, "different pest confirmed on the follow-up"
         else:
-            after = t.f_count
-            reduction = round((before - after) / before * 100, 1) if before and after is not None else None
-            outcome = _outcome(t.infestation_level, t.f_level, before, after)
+            after = t.f_count if t.f_countable is not False else None
+            if before is None or after is None:
+                before_cmp = after_cmp = None
+            else:
+                before_cmp, after_cmp = before, after
+                reduction = round((before - after) / before * 100, 1) if before else None
+            outcome, basis = _outcome(t.infestation_level, t.f_level, before_cmp, after_cmp)
         items.append({
             "id": t.id,
             "scan_id": t.scan_id,
@@ -464,27 +531,43 @@ def treatment_followups(db: Session, viewer: dict) -> dict:
             "option_type": t.option_type,
             "applied_at": t.applied_at.isoformat() if t.applied_at else "",
             "follow_up_due": t.follow_up_due.isoformat() if t.follow_up_due else None,
+            # Before: the treated (reviewed) observation; after: its follow-up.
+            "before_scan_id": t.scan_id,
+            "before_at": t.s_at.isoformat() if t.s_at else None,
+            "before_pest": obs.pest_name(t.confirmed_pest),
             "before_count": before,
             "before_level": t.infestation_level,
             "follow_up_scan_id": t.f_id,
             "follow_up_at": t.f_at.isoformat() if t.f_at else None,
+            "follow_up_status": t.f_status,
+            "after_pest": obs.pest_name(t.f_pest) if t.f_status == "validated" else None,
             "after_count": after,
             "after_level": t.f_level if t.f_status == "validated" else None,
             "reduction_pct": reduction,
             "outcome": outcome,
+            "outcome_basis": basis,
+            "pending": outcome in OUTCOMES_PENDING,
+            "was_recommended": bool(t.was_recommended),
         })
     groups: dict = {}
     for it in items:
         g = groups.setdefault(it["treatment"].lower(), {
             "treatment": it["treatment"], "option_type": it["option_type"], "applications": 0,
-            "compared": 0, "improved": 0, "no_change": 0, "worse": 0})
+            "compared": 0, "improved": 0, "no_change": 0, "worsened": 0, "not_comparable": 0, "pending": 0})
         g["applications"] += 1
-        if it["outcome"] in ("improved", "no change", "worse"):
+        if it["outcome"] in OUTCOMES_FINAL:
             g["compared"] += 1
             g[it["outcome"].replace(" ", "_")] += 1
+        elif it["outcome"] == NOT_COMPARABLE:
+            g["not_comparable"] += 1
+        else:
+            g["pending"] += 1
     summary = sorted(groups.values(), key=lambda g: (-g["compared"], -g["improved"], g["treatment"]))
     overdue = [i for i in items if i["outcome"] == "overdue"]
-    return {"area": area_label(viewer), "items": items, "summary": summary, "overdue": overdue}
+    return {"area": area_label(viewer), "items": items, "summary": summary, "overdue": overdue,
+            "rules": {"count_change_pct": COUNT_CHANGE_PCT, "provisional": True,
+                      "outcomes": list(OUTCOMES_FINAL), "pending": list(OUTCOMES_PENDING),
+                      "not_comparable": NOT_COMPARABLE}}
 
 
 # ---------------------------------------------------------------- directional spread
@@ -520,38 +603,111 @@ def compass(bearing: float) -> tuple:
     return _COMPASS[int((bearing + 22.5) // 45) % 8]
 
 
+# A barangay is named for a window centre only when the centre lies inside
+# that barangay's boundary by at least this much (so boundary simplification
+# and GPS noise can't flip the answer) AND that window has a case located in
+# the same barangay. Otherwise the place "cannot be determined".
+SPREAD_PLACE_MIN_DEPTH_M = 25.0
+
+
 def _span(a: date, b: date) -> str:
+    if a == b:
+        return f"{a:%b} {a.day}, {a.year}"
+    if a.year != b.year:
+        return f"{a:%b} {a.day}, {a.year} - {b:%b} {b.day}, {b.year}"
     if a.month == b.month:
-        return f"{a:%b} {a.day}-{b.day}"
-    return f"{a:%b} {a.day} - {b:%b} {b.day}"
+        return f"{a:%b} {a.day}-{b.day}, {a.year}"
+    return f"{a:%b} {a.day} - {b:%b} {b.day}, {a.year}"
 
 
-def spread(points: list, end: date, window_days: int = 7, min_records: int = SPREAD_MIN_RECORDS) -> dict:
-    """For each pest, where its validated cases cluster in two consecutive
-    windows (e.g. the week before vs the latest week) and how the centre moved.
+def reliable_location(p: dict) -> Optional[dict]:
+    """The Antique barangay of a case when its GPS point is trustworthy, else
+    None. Trustworthy = coordinates present, inside Antique (in a barangay or
+    within geo.MAX_GAP_M of one), not marked outside/no GPS, and a reported
+    accuracy (when the phone sent one) no worse than geo.MAX_ACCURACY_M."""
+    from . import geo
 
-    `points`: validated observations with GPS, already filtered and limited to
-    the viewer's area. Centres are plain averages of the coordinates, which is
-    accurate at municipal or provincial scale. A pest needs `min_records` in
-    BOTH windows; otherwise its direction is "not enough data"."""
+    if p.get("lat") is None or p.get("lng") is None:
+        return None
+    if p.get("location_status") in ("outside_antique", "no_gps"):
+        return None
+    acc = p.get("gps_accuracy_m")
+    if acc is not None and acc > geo.MAX_ACCURACY_M:
+        return None
+    hit = geo.find_barangay(p.get("gps_barangay_psgc")) if p.get("gps_barangay_psgc") else None
+    if hit is None:
+        found = geo.locate(p["lat"], p["lng"])
+        if not found.get("match"):
+            return None
+        hit = {k: found[k] for k in ("psgc", "barangay", "municipality", "municipality_psgc")}
+    return hit
+
+
+def _place_of_centre(c: dict, case_psgcs: set) -> Optional[dict]:
+    from . import geo
+
+    found = geo.locate(c["lat"], c["lng"])
+    if found.get("match") != "inside" or (found.get("depth_m") or 0) < SPREAD_PLACE_MIN_DEPTH_M:
+        return None
+    if found["psgc"] not in case_psgcs:
+        return None
+    return {"psgc": found["psgc"], "barangay": found["barangay"], "municipality": found["municipality"]}
+
+
+def spread_windows(start: Optional[date], end: date, window_days: int) -> tuple:
+    """(w1_start, w1_end, w2_start, w2_end). A custom range [start, end] is
+    split into two halves (the later half gets the extra day when the number
+    of days is odd); otherwise two consecutive windows of `window_days` end on
+    `end`."""
+    if start and start < end:
+        days = (end - start).days + 1
+        half = days // 2
+        w1_start, w1_end = start, start + timedelta(days=half - 1)
+        return w1_start, w1_end, w1_end + timedelta(days=1), end
     w2_start = end - timedelta(days=window_days - 1)
     w1_end = w2_start - timedelta(days=1)
-    w1_start = w1_end - timedelta(days=window_days - 1)
-    unit = "Week" if window_days == 7 else "Period"
-    names = (f"{unit} 1", f"{unit} 2")
+    return w1_end - timedelta(days=window_days - 1), w1_end, w2_start, end
+
+
+def spread(points: list, end: date, window_days: int = 7, min_records: int = SPREAD_MIN_RECORDS,
+           start: Optional[date] = None, lang: str = "en") -> dict:
+    """For each pest, where its validated cases cluster in two consecutive
+    periods and how the centre moved, with the barangay of each centre when
+    the boundary data allows it.
+
+    `points`: validated observations, already filtered and limited to the
+    viewer's area. Only cases with a reliable location (reliable_location())
+    are used; the others are counted in "excluded". Centres are plain
+    averages of the coordinates (accurate at municipal/provincial scale). A
+    pest needs `min_records` reliable cases in BOTH periods, otherwise its
+    direction "cannot be determined". Describes observed movement only."""
+    from . import i18n
+
+    w1_start, w1_end, w2_start, w2_end = spread_windows(start, end, window_days)
+    names = (i18n.render("period.1", lang), i18n.render("period.2", lang))
     windows = [
-        {"name": names[0], "start": w1_start.isoformat(), "end": w1_end.isoformat(), "label": _span(w1_start, w1_end)},
-        {"name": names[1], "start": w2_start.isoformat(), "end": end.isoformat(), "label": _span(w2_start, end)},
+        {"name": names[0], "start": w1_start.isoformat(), "end": w1_end.isoformat(),
+         "label": _span(w1_start, w1_end), "days": (w1_end - w1_start).days + 1},
+        {"name": names[1], "start": w2_start.isoformat(), "end": w2_end.isoformat(),
+         "label": _span(w2_start, w2_end), "days": (w2_end - w2_start).days + 1},
     ]
     by_pest: dict = defaultdict(lambda: ([], []))
+    excluded: dict = defaultdict(int)
     for p in points:
-        if p.get("lat") is None or p.get("lng") is None:
-            continue
-        day = p["created_at"][:10]
+        day = (p.get("created_at") or "")[:10]
         if w1_start.isoformat() <= day <= w1_end.isoformat():
-            by_pest[p["pest"]][0].append(p)
-        elif w2_start.isoformat() <= day <= end.isoformat():
-            by_pest[p["pest"]][1].append(p)
+            slot = 0
+        elif w2_start.isoformat() <= day <= w2_end.isoformat():
+            slot = 1
+        else:
+            continue
+        place = reliable_location(p)
+        if place is None:
+            excluded[p["pest"]] += 1
+            continue
+        by_pest[p["pest"]][slot].append({**p, "_place": place})
+    for pest in excluded:
+        by_pest[pest]  # a pest with only unreliable cases is still listed
 
     def centre(pts):
         if not pts:
@@ -559,37 +715,55 @@ def spread(points: list, end: date, window_days: int = 7, min_records: int = SPR
         return {"lat": sum(p["lat"] for p in pts) / len(pts), "lng": sum(p["lng"] for p in pts) / len(pts),
                 "records": len(pts)}
 
+    period_text = {"p1": f"{names[0]} ({windows[0]['label']})", "p2": f"{names[1]} ({windows[1]['label']})"}
     out = []
     for pest in sorted(by_pest):
         first, second = by_pest[pest]
         c1, c2 = centre(first), centre(second)
         used = len(first) + len(second)
-        span = f"between {names[0]} ({windows[0]['label']}) and {names[1]} ({windows[1]['label']})"
-        records_text = (f"{used} record{'s' if used != 1 else ''} used "
-                        f"({len(first)} in {names[0]}, {len(second)} in {names[1]}).")
-        item = {"pest": pest, "from": c1, "to": c2, "records_used": used,
-                "records": [len(first), len(second)], "direction": None, "direction_word": None,
-                "bearing": None, "distance_km": None}
+        counts = i18n.render("spread.counts", lang, n1=len(first), n2=len(second), min=min_records, **period_text)
+        item = {"pest": pest, "pest_label": i18n.t(pest, lang), "from": c1, "to": c2, "records_used": used,
+                "records": [len(first), len(second)], "excluded": excluded.get(pest, 0),
+                "direction": None, "direction_word": None, "bearing": None, "distance_km": None,
+                "from_place": None, "to_place": None,
+                "from_barangays": sorted({p["_place"]["barangay"] for p in first}),
+                "to_barangays": sorted({p["_place"]["barangay"] for p in second})}
         if len(first) < min_records or len(second) < min_records:
-            item.update(status="insufficient", message=NOT_ENOUGH,
-                        detail=f"Needs at least {min_records} validated records with a location in each "
-                               f"{unit.lower()}. {records_text}")
+            item.update(status="insufficient", message=i18n.render("spread.insufficient", lang), detail=counts,
+                        summary=i18n.render("spread.summary_insufficient", lang))
+            out.append(item)
+            continue
+        item["from_place"] = _place_of_centre(c1, {p["_place"]["psgc"] for p in first})
+        item["to_place"] = _place_of_centre(c2, {p["_place"]["psgc"] for p in second})
+        km = _km(c1["lat"], c1["lng"], c2["lat"], c2["lng"])
+        item["distance_km"] = round(km, 2)
+        if km < SPREAD_STILL_KM:
+            place = item["to_place"] or item["from_place"]
+            item.update(status="still", message=i18n.render("spread.still", lang, **period_text), detail=counts,
+                        summary=(i18n.render("spread.summary_still", lang, brgy=place["barangay"]) if place
+                                 else i18n.render("spread.summary_still_unknown", lang)))
         else:
-            km = _km(c1["lat"], c1["lng"], c2["lat"], c2["lng"])
-            item["distance_km"] = round(km, 2)
-            if km < SPREAD_STILL_KM:
-                item.update(status="still",
-                            message=f"Reported cases stayed in about the same area {span}.",
-                            detail=records_text)
+            b = _bearing(c1["lat"], c1["lng"], c2["lat"], c2["lng"])
+            short, word = compass(b)
+            direction = i18n.render(f"dir.{short}", lang)
+            dist = f"{round(km * 1000)} m" if km < 1 else f"{km:.1f} km"
+            if item["from_place"] and item["to_place"]:
+                summary = i18n.render("spread.summary_places", lang, direction=direction,
+                                      from_brgy=item["from_place"]["barangay"], to_brgy=item["to_place"]["barangay"])
             else:
-                b = _bearing(c1["lat"], c1["lng"], c2["lat"], c2["lng"])
-                short, word = compass(b)
-                dist = f"{round(km * 1000)} m" if km < 1 else f"{km:.1f} km"
-                item.update(status="moved", direction=short, direction_word=word, bearing=round(b, 1),
-                            message=f"Reported cases moved toward the {word} {span}.",
-                            detail=f"About {dist}. {records_text}")
+                summary = i18n.render("spread.summary_no_places", lang, direction=direction)
+            item.update(status="moved", direction=short, direction_word=word, direction_label=direction,
+                        bearing=round(b, 1), summary=summary,
+                        message=i18n.render("spread.moved", lang, direction=direction.lower(), **period_text),
+                        detail=f"{i18n.render('spread.distance', lang, distance=dist)} {counts}")
         out.append(item)
     order = {"moved": 0, "still": 1, "insufficient": 2}
     out.sort(key=lambda i: (order[i["status"]], -i["records_used"], i["pest"]))
-    return {"window_days": window_days, "windows": windows, "min_records": min_records,
-            "note": SPREAD_NOTE, "not_enough_message": NOT_ENOUGH, "pests": out}
+    note = i18n.render("spread.note", lang)
+    return {"window_days": window_days, "custom_range": bool(start and start < end),
+            "period": {"start": w1_start.isoformat(), "end": w2_end.isoformat(),
+                       "label": _span(w1_start, w2_end)},
+            "windows": windows, "min_records": min_records,
+            "cases_used": sum(i["records_used"] for i in out), "cases_excluded": sum(excluded.values()),
+            "note": note, "not_enough_message": i18n.render("spread.insufficient", lang),
+            "language": lang, "pests": out}

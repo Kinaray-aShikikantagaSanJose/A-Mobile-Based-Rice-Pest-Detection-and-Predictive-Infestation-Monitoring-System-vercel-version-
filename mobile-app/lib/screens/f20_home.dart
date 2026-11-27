@@ -90,14 +90,14 @@ class _F20HomeState extends State<F20Home> {
   }
 
   Future<void> _refresh() async {
-    await SyncService.syncAll();
+    await SyncService.syncAll(force: true);
     await _load();
     if (_isTech) await _loadQueue();
   }
 
   Future<void> _sendNow() async {
     setState(() => _sending = true);
-    await SyncService.syncAll();
+    await SyncService.syncAll(retryRefused: true);
     if (!mounted) return;
     setState(() => _sending = false);
     if (_records.any((r) => !r.uploaded)) {
@@ -124,7 +124,8 @@ class _F20HomeState extends State<F20Home> {
               child: ListView(
                 padding: EdgeInsets.zero,
                 children: [
-                  Padding(
+                  MaxContentWidth(
+                    child: Padding(
                     padding: const EdgeInsets.fromLTRB(
                       AppSpacing.hPad,
                       AppSpacing.lg,
@@ -200,6 +201,7 @@ class _F20HomeState extends State<F20Home> {
                         ..._recent(),
                       ]),
                     ),
+                  ),
                   ),
                 ],
               ),
@@ -417,7 +419,10 @@ class _Hero extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(context.tr(_greeting()), style: TextStyle(color: Colors.white.withValues(alpha: 0.75), fontSize: 13.5)),
+                          Text(context.tr(_greeting()),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(color: Colors.white.withValues(alpha: 0.75), fontSize: 13.5)),
                           Text(
                             first.isEmpty ? context.tr('Welcome') : first,
                             maxLines: 1,
@@ -434,7 +439,8 @@ class _Hero extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(width: AppSpacing.sm),
-                    // Language: English / Filipino / Kinaray-a.
+                    // Language: English / Filipino / Kinaray-a (the only
+                    // language control on Home; the account sheet has none).
                     const LanguageButton(dark: true),
                   ],
                 ),
@@ -729,7 +735,7 @@ class _QueueCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(context.tr('Validation queue'), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+                    Text(context.tr('Not Validated queue'), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
                     Text(context.tr('Observations in your area'),
                         style: const TextStyle(color: AppColors.textMuted, fontSize: 12.5)),
                   ],
@@ -877,7 +883,12 @@ class _AttentionCard extends StatelessWidget {
                             const SizedBox(height: 6),
                             Row(
                               children: [
-                                Text(action, style: TextStyle(color: color, fontWeight: FontWeight.w800, fontSize: 13)),
+                                Flexible(
+                                  child: Text(action,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(color: color, fontWeight: FontWeight.w800, fontSize: 13)),
+                                ),
                                 Icon(Icons.chevron_right_rounded, size: 18, color: color),
                               ],
                             ),
@@ -1012,7 +1023,7 @@ class _Legend extends StatelessWidget {
         children: [
           Container(width: 8, height: 8, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
           const SizedBox(width: 4),
-          Text(label, style: const TextStyle(color: AppColors.textMuted, fontSize: 11.5)),
+          Flexible(child: Text(label, style: const TextStyle(color: AppColors.textMuted, fontSize: 11.5))),
         ],
       );
 }
@@ -1108,7 +1119,7 @@ class RecordTile extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  [formatRelativeDay(r.createdAt), r.cropStage].where((x) => x.isNotEmpty).join(' · '),
+                  [formatRelativeDay(r.createdAt), if (r.cropStage.isNotEmpty) context.tr(r.cropStage)].join(' · '),
                   style: const TextStyle(color: AppColors.textMuted, fontSize: 12.5),
                 ),
                 const SizedBox(height: AppSpacing.sm),
