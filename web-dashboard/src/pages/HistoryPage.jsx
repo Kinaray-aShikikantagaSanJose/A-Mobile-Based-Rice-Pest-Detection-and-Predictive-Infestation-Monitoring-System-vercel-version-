@@ -1,13 +1,11 @@
 import { useState } from 'react';
 import { api } from '../api.js';
 import RecordDrawer from '../components/RecordDrawer.jsx';
-import { Badge, Button, Empty, ErrorNote, Field, LevelBadge, Loading, Panel, PageHeader, ReportTypeBadge, Segmented, Stat, Table } from '../components/ui.jsx';
+import { Badge, Empty, ErrorNote, Field, LevelBadge, Loading, Panel, PageHeader, ReportTypeBadge, Segmented, Stat, Table } from '../components/ui.jsx';
 import { useT } from '../i18n/index.jsx';
 import { fmtCount, fmtDateTime, fmtNum, REVIEW_ACTIONS, useAsync } from '../lib.js';
 
 const ACTION_TONE = { validated: 'green', returned: 'gray', escalated: 'purple', diagnosis: 'blue' };
-const PAGE = 50;
-
 /** A validation that changed the model result's pest or count. */
 const corrected = (r) => r.action === 'validated' && r.report_type === 'pest' && r.ai_pest !== r.pest;
 
@@ -17,7 +15,6 @@ export default function HistoryPage({ viewer }) {
   const res = useAsync(() => api.myReviews({ limit: 500 }), []);
   const [show, setShow] = useState('all');
   const [search, setSearch] = useState('');
-  const [shown, setShown] = useState(PAGE);
   const [openId, setOpenId] = useState(null);
   const all = res.data?.items || [];
   const n = (action) => all.filter((r) => r.action === action).length;
@@ -55,10 +52,7 @@ export default function HistoryPage({ viewer }) {
         actions={
           <Segmented
             value={show}
-            onChange={(v) => {
-              setShown(PAGE);
-              setShow(v);
-            }}
+            onChange={setShow}
             options={[
               ['all', t('All')],
               ['validated', t('Validated')],
@@ -82,7 +76,7 @@ export default function HistoryPage({ viewer }) {
           <Loading />
         ) : (
           <Table
-            rows={rows.slice(0, shown)}
+            rows={rows}
             onRowClick={(r) => setOpenId(r.scan_id)}
             empty={
               <Empty title={all.length ? t('Nothing matches') : t('No decisions yet')}>
@@ -137,13 +131,6 @@ export default function HistoryPage({ viewer }) {
               { key: 'note', label: t('Note / reason'), render: (r) => <span className="line-clamp-2 max-w-[280px] text-ink2">{r.note || '—'}</span> },
             ]}
           />
-        )}
-        {rows.length > shown && (
-          <div className="border-t border-line p-4 text-center">
-            <Button variant="secondary" onClick={() => setShown((x) => x + PAGE)}>
-              {t('Show {n} more', { n: Math.min(PAGE, rows.length - shown) })}
-            </Button>
-          </div>
         )}
       </Panel>
       {openId && <RecordDrawer scanId={openId} viewer={viewer} onClose={() => setOpenId(null)} onChanged={res.reload} />}

@@ -397,37 +397,51 @@ export function Empty({ title, children }) {
  * columns: [{ key, label, render?(row), className?, align? }]
  * Rows are clickable when onRowClick is given.
  */
+const TABLE_PAGE_SIZE = 30;
+
 export function Table({ columns, rows, rowKey = 'id', onRowClick, empty }) {
   const t = useT();
+  const [offset, setOffset] = useState(0);
+  const rowSignature = JSON.stringify(rows.map((row, index) => row?.[rowKey] ?? row?.id ?? row?.scan_id ?? index));
+  useEffect(() => {
+    setOffset(0);
+  }, [rowSignature]);
+  const pageRows = rows.slice(offset, offset + TABLE_PAGE_SIZE);
+
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm">
-        <thead className="border-b border-line bg-canvas/60">
-          <tr>
-            {columns.map((c) => (
-              <th key={c.key} className={`th ${c.align === 'right' ? 'text-right' : ''} ${c.headClassName || ''}`}>
-                {c.label}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr
-              key={row[rowKey]}
-              onClick={onRowClick ? () => onRowClick(row) : undefined}
-              className={`border-b border-line/70 last:border-0 ${onRowClick ? 'cursor-pointer hover:bg-brand-50/60' : ''}`}
-            >
+    <div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="border-b border-line bg-canvas/60">
+            <tr>
               {columns.map((c) => (
-                <td key={c.key} className={`td ${c.align === 'right' ? 'text-right tabular-nums' : ''} ${c.className || ''}`}>
-                  {c.render ? c.render(row) : row[c.key]}
-                </td>
+                <th key={c.key} className={`th ${c.align === 'right' ? 'text-right' : ''} ${c.headClassName || ''}`}>
+                  {c.label}
+                </th>
               ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
-      {!rows.length && (empty || <Empty title={t('Nothing to show')} />)}
+          </thead>
+          <tbody>
+            {pageRows.map((row) => (
+              <tr
+                key={row[rowKey]}
+                onClick={onRowClick ? () => onRowClick(row) : undefined}
+                className={`border-b border-line/70 last:border-0 ${onRowClick ? 'cursor-pointer hover:bg-brand-50/60' : ''}`}
+              >
+                {columns.map((c) => (
+                  <td key={c.key} className={`td ${c.align === 'right' ? 'text-right tabular-nums' : ''} ${c.className || ''}`}>
+                    {c.render ? c.render(row) : row[c.key]}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {!rows.length && (empty || <Empty title={t('Nothing to show')} />)}
+      </div>
+      {rows.length > TABLE_PAGE_SIZE && (
+        <Pager total={rows.length} limit={TABLE_PAGE_SIZE} offset={offset} onChange={setOffset} />
+      )}
     </div>
   );
 }
@@ -538,7 +552,7 @@ export function useConfirm() {
 
 // ---------------------------------------------------------------- pager
 
-/** Server-side paging controls: "1-50 of 230" with previous/next. */
+/** Paging controls: "1-30 of 230" with previous/next. */
 export function Pager({ total, limit, offset, onChange, loading = false }) {
   const t = useT();
   if (!total || total <= limit) {

@@ -9,7 +9,7 @@ import { CROP_STAGES, fmtCount, fmtDate, LAND_TYPES, landTypeLabel, LEVELS, useA
 const STATUSES = [...STATUS_OPTIONS, ['all', 'All statuses']];
 // Paged on the server: the filters and the sort apply to every page, and the
 // CSV export uses exactly the same filters (all matching rows, no paging).
-const PAGE = 50;
+const PAGE = 30;
 const NO_FILTERS = {
   status: 'validated', pest: '', level: '', municipality: '', crop_stage: '', land_type: '', start: '', end: '',
   relevance: '', sort: '-created_at',

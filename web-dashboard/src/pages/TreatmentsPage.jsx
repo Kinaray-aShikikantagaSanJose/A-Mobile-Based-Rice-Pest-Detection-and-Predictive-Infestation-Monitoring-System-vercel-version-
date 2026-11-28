@@ -16,7 +16,7 @@ const OUTCOME_FILTERS = [
   ['pending', 'Pending'],
   ['overdue', 'Overdue'],
 ];
-const PAGE = 50;
+const PAGE = 30;
 
 function Change({ pct }) {
   if (pct === null || pct === undefined) return <span className="text-muted">—</span>;

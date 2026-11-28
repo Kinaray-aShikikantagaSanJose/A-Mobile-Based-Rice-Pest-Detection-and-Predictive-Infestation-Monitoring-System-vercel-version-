@@ -492,7 +492,7 @@ function UserRow({ u, onEdit, onDelete }) {
   );
 }
 
-const USERS_PAGE = 50;
+const USERS_PAGE = 30;
 
 /** Accounts, filtered and paged on the server (same order on every page). */
 function AccountsTable({ users, barangaysOf, onSaved, version }) {

@@ -2,9 +2,9 @@ import { useState } from 'react';
 import { api } from '../api.js';
 import { useT } from '../i18n/index.jsx';
 import { fmtDateTime, ROLE_LABELS, todayIso, useAction, useAsync, useDebounced } from '../lib.js';
-import { Badge, Button, Empty, ErrorNote, Field, Loading, PageHeader, Panel, Segmented, Select, Table } from '../components/ui.jsx';
+import { Badge, Button, Empty, ErrorNote, Field, Loading, PageHeader, Pager, Panel, Segmented, Select, Table } from '../components/ui.jsx';
 
-const PAGE = 100;
+const PAGE = 30;
 
 /** English labels for the action types the API records (app/activity.py). */
 export const ACTION_LABELS = {
@@ -157,14 +157,14 @@ export default function ActivityPage() {
   const [tab, setTab] = useState('activity');
   const [search, setSearch] = useState('');
   const [f, setF] = useState(NO_FILTERS);
-  const [limit, setLimit] = useState(PAGE);
+  const [offset, setOffset] = useState(0);
   const q = useDebounced(search);
   const set = (key) => (value) => {
-    setLimit(PAGE);
+    setOffset(0);
     setF((prev) => ({ ...prev, [key]: value }));
   };
-  const params = { ...f, q, limit };
-  const sessionParams = { q, email: f.email, role: f.role, session_status: f.session_status === 'none' ? '' : f.session_status, start: f.start, end: f.end, limit };
+  const params = { ...f, q, limit: PAGE, offset };
+  const sessionParams = { q, email: f.email, role: f.role, session_status: f.session_status === 'none' ? '' : f.session_status, start: f.start, end: f.end, limit: PAGE, offset };
   const res = useAsync(() => (tab === 'activity' ? api.activity(params) : api.activitySessions(sessionParams)), [tab, JSON.stringify(params)]);
   const users = useAsync(() => api.users(), []);
   const exporting = useAction();
@@ -270,7 +270,7 @@ export default function ActivityPage() {
         <Segmented
           value={tab}
           onChange={(v) => {
-            setLimit(PAGE);
+            setOffset(0);
             setTab(v);
           }}
           options={[
@@ -286,7 +286,7 @@ export default function ActivityPage() {
           set={set}
           search={search}
           setSearch={(v) => {
-            setLimit(PAGE);
+            setOffset(0);
             setSearch(v);
           }}
           users={users.data || []}
@@ -298,7 +298,7 @@ export default function ActivityPage() {
           <span>
             {res.data
               ? t(tab === 'activity' ? '{shown} of {total} entries' : '{shown} of {total} sessions', {
-                  shown: Math.min(items.length, total).toLocaleString('en-PH'),
+                  shown: Math.min(offset + items.length, total).toLocaleString('en-PH'),
                   total: total.toLocaleString('en-PH'),
                 })
               : ' '}
@@ -312,7 +312,7 @@ export default function ActivityPage() {
                 onClick={() => {
                   setSearch('');
                   setF(NO_FILTERS);
-                  setLimit(PAGE);
+                  setOffset(0);
                 }}
               >
                 {t('Clear filters')}
@@ -330,13 +330,7 @@ export default function ActivityPage() {
             empty={<Empty title={t('Nothing recorded yet')}>{t('Try clearing a filter or widening the date range.')}</Empty>}
           />
         )}
-        {items.length < total && (
-          <div className="border-t border-line p-4 text-center">
-            <Button variant="secondary" busy={res.loading} onClick={() => setLimit((n) => Math.min(500, n + PAGE))} disabled={limit >= 500}>
-              {limit >= 500 ? t('Narrow the filters to see older entries') : t('Show more')}
-            </Button>
-          </div>
-        )}
+        <Pager total={total} limit={PAGE} offset={offset} onChange={setOffset} loading={res.loading} />
       </Panel>
       <p className="mt-3 text-xs text-muted">
         {t('A session is active until the person signs out, or expired after {days} days without use.', { days: res.data?.session_lifetime_days ?? 90 })}

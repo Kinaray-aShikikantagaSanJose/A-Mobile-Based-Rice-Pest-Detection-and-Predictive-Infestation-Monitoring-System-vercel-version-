@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, clearSession, LIVE_DATA, SAVED_DATA, setToken } from '../api.js';
 import { meaningful } from '../components/ReviewForm.jsx';
 import Sidebar from '../components/Sidebar.jsx';
-import { ConfirmDialog, Pager, RelevanceBadge, StatusBadge, useConfirm } from '../components/ui.jsx';
+import { ConfirmDialog, Pager, RelevanceBadge, StatusBadge, Table, useConfirm } from '../components/ui.jsx';
 import { I18nProvider, setLanguage, translate } from '../i18n/index.jsx';
 import { TRANSLATIONS } from '../i18n/strings.js';
 
@@ -133,6 +133,21 @@ describe('Pager', () => {
   it('disables Next on the last page', () => {
     wrap(<Pager total={120} limit={50} offset={100} onChange={() => {}} />);
     expect(screen.getByText('Next').closest('button').disabled).toBe(true);
+  });
+});
+
+describe('table pagination', () => {
+  it('shows 30 rows per page and advances to the next page', () => {
+    const rows = Array.from({ length: 31 }, (_, id) => ({ id, name: `Row ${id + 1}` }));
+    wrap(<Table rows={rows} columns={[{ key: 'name', label: 'Name' }]} />);
+
+    expect(screen.getAllByRole('row')).toHaveLength(31);
+    expect(screen.getByText('1–30 of 31')).toBeTruthy();
+
+    fireEvent.click(screen.getByText('Next'));
+    expect(screen.getAllByRole('row')).toHaveLength(2);
+    expect(screen.getByText('Row 31')).toBeTruthy();
+    expect(screen.getByText('31–31 of 31')).toBeTruthy();
   });
 });
 
